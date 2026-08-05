@@ -4,6 +4,35 @@ Running record of decisions, discoveries, and blockers for the Glossolalie Advis
 
 ---
 
+## 2026-08-05 — Step 5: Perception pipeline interface definitions
+
+**What was built.**
+
+`linux-stack/perception/base.py` — abstract interface definitions for the AI inference layer.
+
+Key design decisions:
+
+- **`DetectionResult` as a frozen dataclass**: The governance layer reads detections but must never mutate them. Frozen prevents any accidental field mutation after the backend produces the result — a `FrozenInstanceError` is raised rather than silently corrupting a detection mid-pipeline.
+- **`confidence` in [0.0, 1.0] with float32 clamp**: The IPC codec encodes confidence as IEEE 754 float32. A Python `float64` value of exactly `1.0` encodes safely, but values computed by models can slightly exceed 1.0 due to softmax numerical noise. `__post_init__` clamps at `_CONFIDENCE_MAX = 0.9999` — this is a transport concern, not a model quality concern, and clamping silently is correct (raising would crash the perception loop on a trivially valid result).
+- **`PerceptionPipeline` as an ABC with `run(frame) → list[DetectionResult]`**: The governance layer depends on this interface, not any specific backend. YOLO-X, MediaPipe, and PoseNet all subclass it; the governance filter is backend-agnostic. `run()` must return `[]` on inference error — never raise — to prevent a single corrupt frame from halting the safety loop.
+- **`_stamp()` helper on PerceptionPipeline**: Backends call `self._stamp(result)` to populate `backend` without the caller needing to know the backend name. This keeps backend identity in the right layer.
+- **Stub backends for offline development**: `StubObjectDetector`, `StubGestureRecognizer`, `StubPoseEstimator` return realistic detections without model weights, camera, or NPU. `NullPipeline` returns `[]` and exercises the "no detections → no command" governance path. All four are drop-in substitutes for their production equivalents.
+
+**Production backend mapping** (not yet implemented — gated on VENTUNO Q pinout + NPU SDK):
+- `StubObjectDetector` → YOLO-X on the Arduino NPU, watching the workspace via MIPI-CSI camera
+- `StubGestureRecognizer` → MediaPipe Hands on CPU (model small enough to run off-NPU)
+- `StubPoseEstimator` → MoveNet Lightning on NPU, proximity breach detection
+
+`linux-stack/tests/test_perception.py` — 46 unit tests covering DetectionResult (construction, validation, frozen semantics, confidence clamping, `passes_threshold`) and all four stub backends.
+
+`linux-stack/tests/test_smoke_perception.py` — 5 `@pytest.mark.smoke` tests covering the full perception→governance path: import, all stubs produce valid results, null pipeline suppresses commands, immutability enforcement, confidence gate filtering.
+
+**QA results**: 141 tests total (linux-stack), 97.8% coverage, ruff clean.
+
+**Insight for article.** The perception interface is the most important architectural decision in the AI stack — not because inference is hard, but because governance requires that inference be *replaceable*. The `PerceptionPipeline` ABC means the governance code (audit logging, IPC dispatch, confidence filtering) never imports a model name. Swapping YOLO-X for a different detector requires only a new subclass, zero changes to the governance layer. This is the Dependency Inversion Principle applied to safety: the high-level governance policy should not depend on the low-level inference detail. In automotive functional safety (ISO 26262), this is called "freedom from interference" — one subsystem's failure mode cannot propagate into another.
+
+---
+
 ## 2026-08-05 — Step 4: Mock STM32H5 peer
 
 **What was built.**
