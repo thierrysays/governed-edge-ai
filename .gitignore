@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+venv/
+env/
+.venv/
+.env
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+*.log
+*.db-journal
+
+# C / Zephyr
+*.o
+*.elf
+*.hex
+*.bin
+*.map
+*.lst
+.west/
+
+# Models and weights (large binary files)
+*.onnx
+*.tflite
+*.pt
+*.pth
+*.pkl
+models/
+
+# Node / Dashboard
+node_modules/
+dist/
+.env.local
+.env.*.local
+npm-debug.log*
+
+# Audit database (runtime data, not versioned)
+audit-service/*.db
+audit-service/*.sqlite
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
