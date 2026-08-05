@@ -21,8 +21,8 @@ Actor = Literal["ai", "human_override"]
 DetectionType = Literal["object", "gesture", "pose"]
 
 _SCHEMA = Path(__file__).parent / "schema.sql"
-_VALID_ACTORS: frozenset = frozenset({"ai", "human_override"})
-_VALID_DETECTION_TYPES: frozenset = frozenset({"object", "gesture", "pose"})
+_VALID_ACTORS: frozenset[str] = frozenset({"ai", "human_override"})
+_VALID_DETECTION_TYPES: frozenset[str] = frozenset({"object", "gesture", "pose"})
 
 
 @dataclass(frozen=True)
@@ -136,7 +136,7 @@ class AuditLogger:
     def __enter__(self) -> "AuditLogger":
         return self
 
-    def __exit__(self, *_) -> None:
+    def __exit__(self, *_: object) -> None:
         self.close()
 
 

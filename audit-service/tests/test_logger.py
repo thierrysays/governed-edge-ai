@@ -11,12 +11,12 @@ Marker conventions (see pyproject.toml):
   @pytest.mark.integration - real disk I/O
 """
 
-import pytest
 import sqlite3
 from pathlib import Path
 
-from logger import AuditEvent, AuditLogger
+import pytest
 
+from logger import AuditEvent, AuditLogger
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -39,16 +39,16 @@ def session_id(logger) -> str:
 
 
 def _event(**overrides) -> AuditEvent:
-    defaults = dict(
-        session_id="placeholder",
-        actor="ai",
-        detection_type="object",
-        detection_label="person",
-        confidence=0.85,
-        command="HALT",
-        command_sent=True,
-        stm32_ack=None,
-    )
+    defaults = {
+        "session_id": "placeholder",
+        "actor": "ai",
+        "detection_type": "object",
+        "detection_label": "person",
+        "confidence": 0.85,
+        "command": "HALT",
+        "command_sent": True,
+        "stm32_ack": None,
+    }
     defaults.update(overrides)
     return AuditEvent(**defaults)
 
@@ -303,7 +303,7 @@ class TestAppendOnly:
     def test_context_manager_closes_connection(self, db_path):
         with AuditLogger(db_path) as lg:
             pass
-        with pytest.raises(Exception):
+        with pytest.raises(sqlite3.ProgrammingError):
             lg._conn.execute("SELECT 1")
 
     def test_partial_index_on_flag(self, logger):

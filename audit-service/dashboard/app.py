@@ -82,12 +82,12 @@ Db = Annotated[sqlite3.Connection, Depends(get_db)]
 # ---------------------------------------------------------------------------
 
 @app.get("/health", tags=["ops"])
-def health() -> dict:
+def health() -> dict[str, str]:
     return {"status": "ok", "db": str(DB_PATH)}
 
 
 @app.get("/sessions", response_model=list[SessionOut], tags=["audit"])
-def list_sessions(db: Db) -> list[dict]:
+def list_sessions(db: Db) -> list[dict[str, object]]:
     rows = db.execute(
         "SELECT session_id, started_at, ended_at, board_serial, notes"
         " FROM sessions ORDER BY started_at DESC"
@@ -103,9 +103,9 @@ def list_events(
     flagged: bool | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
-) -> list[dict]:
+) -> list[dict[str, object]]:
     clauses: list[str] = []
-    params: list = []
+    params: list[object] = []
 
     if session_id is not None:
         clauses.append("session_id = ?")
@@ -117,21 +117,24 @@ def list_events(
         clauses.append("flag = ?")
         params.append(int(flagged))
 
-    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
     params += [limit, offset]
 
-    rows = db.execute(
-        f"SELECT id, ts, session_id, actor, detection_type, detection_label,"  # noqa: S608
-        f"       confidence, command, command_sent, stm32_ack, flag, notes"
-        f" FROM audit_log {where} ORDER BY ts DESC LIMIT ? OFFSET ?",
-        params,
-    ).fetchall()
+    sql = (
+        "SELECT id, ts, session_id, actor, detection_type, detection_label,"
+        "       confidence, command, command_sent, stm32_ack, flag, notes"
+        " FROM audit_log"
+    )
+    if clauses:
+        sql += " WHERE " + " AND ".join(clauses)
+    sql += " ORDER BY ts DESC LIMIT ? OFFSET ?"
+
+    rows = db.execute(sql, params).fetchall()
 
     return [_coerce_event(dict(r)) for r in rows]
 
 
 @app.post("/events/{event_id}/flag", response_model=FlagResponse, tags=["audit"])
-def flag_event(event_id: int, body: FlagRequest, db: Db) -> dict:
+def flag_event(event_id: int, body: FlagRequest, db: Db) -> dict[str, object]:
     row = db.execute(
         "SELECT id FROM audit_log WHERE id = ?", (event_id,)
     ).fetchone()
@@ -148,7 +151,7 @@ def flag_event(event_id: int, body: FlagRequest, db: Db) -> dict:
 @app.get("/query", response_model=QueryResponse, tags=["llm"])
 def query(
     q: str = Query(..., min_length=1, description="Natural-language query over the audit log"),
-) -> dict:
+) -> dict[str, str]:
     return {
         "query": q,
         "answer": (
@@ -163,7 +166,7 @@ def query(
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _coerce_event(row: dict) -> dict:
+def _coerce_event(row: dict[str, object]) -> dict[str, object]:
     """Convert sqlite3 integer booleans to Python bools for the response model."""
     row["command_sent"] = bool(row["command_sent"])
     row["stm32_ack"] = None if row["stm32_ack"] is None else bool(row["stm32_ack"])

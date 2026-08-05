@@ -4,14 +4,15 @@ Run these first in CI (pytest -m smoke) to catch import or schema failures
 before spending time on the full suite.
 """
 
+
 import pytest
-from pathlib import Path
+
 from logger import AuditEvent, AuditLogger
 
 
 @pytest.mark.smoke
 def test_import():
-    from logger import AuditLogger, AuditEvent, _now, _validate  # noqa: F401
+    from logger import AuditEvent, AuditLogger, _now, _validate  # noqa: F401
 
 
 @pytest.mark.smoke

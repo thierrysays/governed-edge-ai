@@ -160,7 +160,7 @@ class MockSTM32H5:
     def __enter__(self) -> "MockSTM32H5":
         return self.start()
 
-    def __exit__(self, *_) -> None:
+    def __exit__(self, *_: object) -> None:
         self.stop()
 
     # ------------------------------------------------------------------

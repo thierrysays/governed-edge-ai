@@ -7,13 +7,13 @@ in production.
 """
 
 import sqlite3
-import pytest
-from fastapi.testclient import TestClient
 from pathlib import Path
 
-from logger import AuditEvent, AuditLogger
-from dashboard.app import app, get_db
+import pytest
+from fastapi.testclient import TestClient
 
+from dashboard.app import app, get_db
+from logger import AuditEvent, AuditLogger
 
 # ---------------------------------------------------------------------------
 # Fixtures

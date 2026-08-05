@@ -6,28 +6,43 @@ frame byte structure, error cases, and the incremental FrameParser.
 """
 
 import struct
+
 import pytest
 
 from ipc.codec import (
-    MAGIC, MAX_FRAME, MAX_PAYLOAD,
-    MsgType, Actor, ActionType, AckStatus, RejectReason, HaltTrigger, SystemState,
-    CommandRequest, CommandAck, CommandReject, HaltNotify,
-    Heartbeat, HeartbeatAck, StatusQuery, StatusResponse,
-    FrameError, FrameParser,
-    crc16_ccitt, encode, decode,
+    MAGIC,
+    AckStatus,
+    ActionType,
+    Actor,
+    CommandAck,
+    CommandReject,
+    CommandRequest,
+    FrameError,
+    FrameParser,
+    HaltNotify,
+    HaltTrigger,
+    Heartbeat,
+    HeartbeatAck,
+    MsgType,
+    RejectReason,
+    StatusQuery,
+    StatusResponse,
+    SystemState,
+    crc16_ccitt,
+    decode,
+    encode,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 def _cmd_req(**kw) -> CommandRequest:
-    defaults = dict(
-        audit_ref=42, timestamp_us=1_000_000,
-        actor=Actor.AI, confidence=0.91,
-        action_type=ActionType.HALT, action_param=0,
-    )
+    defaults = {
+        "audit_ref": 42, "timestamp_us": 1_000_000,
+        "actor": Actor.AI, "confidence": 0.91,
+        "action_type": ActionType.HALT, "action_param": 0,
+    }
     defaults.update(kw)
     return CommandRequest(**defaults)
 
@@ -314,7 +329,7 @@ class TestFrameParser:
         parser = FrameParser()
         # Wrap with a valid frame after so the parser keeps going
         parser.feed(bytes(frame) + encode(HeartbeatAck()))
-        msgs = parser.pop_messages()
+        parser.pop_messages()
         assert len(parser.errors) >= 1
         assert "CRC" in parser.errors[0]
 

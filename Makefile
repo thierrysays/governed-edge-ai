@@ -1,28 +1,27 @@
 # Governed Edge AI — project-wide QA targets
 #
-# Canonical rule: every module under this repo must have a test/ directory
-# and must pass `make test` before code is committed.
+# Canonical rule: every module under this repo must have a tests/ directory
+# and must pass `make qa` before code is committed.
 #
 # Usage:
 #   make smoke            fast sanity pass (all modules)
 #   make test             full test + coverage (all modules)
-#   make lint             ruff check (all Python modules)
-#   make qa               lint + test (CI gate)
-#   make audit-test       audit-service only
-#   make audit-smoke      audit-service smoke only
-#   make audit-lint       audit-service lint only
-#   make linux-test       linux-stack only
-#   make linux-smoke      linux-stack smoke only
-#   make linux-lint       linux-stack lint only
+#   make lint             ruff check (all Python, including S/security rules)
+#   make typecheck        mypy static type checking (production files only)
+#   make security         bandit SAST + pip-audit CVE scan
+#   make qa               lint + typecheck + security + test  (CI gate)
+#
+#   Per-module variants: audit-{test,smoke,lint,typecheck,security}
+#                        linux-{test,smoke,lint,typecheck,security}
 
 PYTHON      := python3
 AUDIT       := audit-service
 LINUX       := linux-stack
 
-.PHONY: smoke test lint qa \
-        audit-test audit-smoke audit-lint \
-        linux-test linux-smoke linux-lint \
-        _check-audit-deps _check-linux-deps
+.PHONY: smoke test lint typecheck security qa \
+        audit-test audit-smoke audit-lint audit-typecheck audit-security \
+        linux-test linux-smoke linux-lint linux-typecheck linux-security \
+        _check-audit-deps _check-linux-deps _check-sec-deps
 
 # ---------------------------------------------------------------------------
 # Top-level targets (extend as modules are added)
@@ -34,7 +33,11 @@ test: audit-test linux-test
 
 lint: audit-lint linux-lint
 
-qa: lint test
+typecheck: audit-typecheck linux-typecheck
+
+security: audit-security linux-security
+
+qa: lint typecheck security test
 
 # ---------------------------------------------------------------------------
 # audit-service
@@ -53,8 +56,19 @@ audit-test: _check-audit-deps
 	cd $(AUDIT) && $(PYTHON) -m pytest
 
 audit-lint: _check-audit-deps
-	@echo "==> audit-service: ruff lint"
-	cd $(AUDIT) && $(PYTHON) -m ruff check . --exclude tests/
+	@echo "==> audit-service: ruff lint (incl. security rules)"
+	cd $(AUDIT) && $(PYTHON) -m ruff check .
+
+audit-typecheck: _check-audit-deps
+	@echo "==> audit-service: mypy type check"
+	cd $(AUDIT) && $(PYTHON) -m mypy logger.py dashboard/app.py dashboard/models.py \
+		--ignore-missing-imports --python-version 3.11
+
+audit-security: _check-sec-deps
+	@echo "==> audit-service: bandit SAST"
+	cd $(AUDIT) && $(PYTHON) -m bandit -r . --exclude ./tests -ll -q
+	@echo "==> audit-service: pip-audit CVE scan"
+	pip-audit --requirement $(AUDIT)/requirements.txt
 
 # ---------------------------------------------------------------------------
 # linux-stack
@@ -73,8 +87,27 @@ linux-test: _check-linux-deps
 	cd $(LINUX) && $(PYTHON) -m pytest
 
 linux-lint: _check-linux-deps
-	@echo "==> linux-stack: ruff lint"
-	cd $(LINUX) && $(PYTHON) -m ruff check ipc/ --exclude tests/
+	@echo "==> linux-stack: ruff lint (incl. security rules)"
+	cd $(LINUX) && $(PYTHON) -m ruff check .
+
+linux-typecheck: _check-linux-deps
+	@echo "==> linux-stack: mypy type check"
+	cd $(LINUX) && $(PYTHON) -m mypy ipc/ perception/ \
+		--ignore-missing-imports --python-version 3.11
+
+linux-security: _check-sec-deps
+	@echo "==> linux-stack: bandit SAST"
+	cd $(LINUX) && $(PYTHON) -m bandit -r ipc/ perception/ -ll -q
+	@echo "==> linux-stack: pip-audit CVE scan"
+	pip-audit --requirement $(LINUX)/requirements.txt
+
+# ---------------------------------------------------------------------------
+# Security tool dep check
+# ---------------------------------------------------------------------------
+
+_check-sec-deps:
+	@$(PYTHON) -m bandit --version >/dev/null 2>&1 || \
+		(echo "Installing security tools..." && pip install -q bandit pip-audit mypy)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -82,4 +115,4 @@ linux-lint: _check-linux-deps
 
 help:
 	@grep -E '^[a-zA-Z_-]+:' Makefile | \
-		awk -F: '{printf "  make %-20s\n", $$1}'
+		awk -F: '{printf "  make %-25s\n", $$1}'

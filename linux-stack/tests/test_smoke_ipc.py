@@ -5,14 +5,27 @@ Exercises the full log-before-act → encode → transmit → decode → ack lif
 without any hardware.
 """
 
-import struct
 import pytest
 
 from ipc.codec import (
-    Actor, ActionType, AckStatus, RejectReason, HaltTrigger, SystemState,
-    CommandRequest, CommandAck, CommandReject, HaltNotify, Heartbeat, HeartbeatAck,
-    StatusQuery, StatusResponse, FrameParser,
-    crc16_ccitt, encode, decode,
+    AckStatus,
+    ActionType,
+    Actor,
+    CommandAck,
+    CommandReject,
+    CommandRequest,
+    FrameParser,
+    HaltNotify,
+    HaltTrigger,
+    Heartbeat,
+    HeartbeatAck,
+    RejectReason,
+    StatusQuery,
+    StatusResponse,
+    SystemState,
+    crc16_ccitt,
+    decode,
+    encode,
 )
 
 
