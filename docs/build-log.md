@@ -4,6 +4,33 @@ Running record of decisions, discoveries, and blockers for the Glossolalie Advis
 
 ---
 
+## 2026-08-05 — Step 6: Governance filter (perception → audit → IPC dispatch)
+
+**What was built.**
+
+`linux-stack/governance/filter.py` — `GovernanceFilter`: the central safety gate that bridges the perception pipeline to the audit logger and IPC command dispatch.
+
+Key design decisions:
+
+- **Log-before-act as the primary constraint**: `process_frame()` calls `logger.log_event()` and receives a confirmed SQLite row ID (`audit_ref`) before constructing any `CommandRequest` frame. If logging fails, the exception propagates and no frame is sent. The audit record always precedes the command — never the reverse.
+- **One command per frame with full audit trail**: Every detection in a frame is logged, regardless of whether a command is issued. The highest-confidence detection above the threshold gets `command_sent=True`; all others get `command_sent=False`. Suppressed detections remain in the audit log as forensic evidence of what the system saw and chose not to act on.
+- **Dual-layer confidence gate**: The Linux filter (`confidence_threshold=0.70`) is the first gate. The STM32H5 mock peer applies an independent second gate at the same threshold. A detection that passes the Linux gate may still be rejected by the MCU (e.g. `0.70` in float64 encodes to slightly below `0.70` in float32 — the dual gate catches this). This defence-in-depth means neither layer trusts the other's filtering decision.
+- **Safety-conservative label mapping**: `DEFAULT_COMMAND_MAP` maps detection labels to `(ActionType, action_param)` pairs. Unknown labels fall through to `_DEFAULT_ACTION = (ActionType.HALT, 0)`. The system never ignores an unknown detection — it always halts. This is the correct safety-conservative default for an undefined input.
+- **ACK/REJECT tracking via `_read_response()`**: After writing a `CommandRequest` frame, the filter polls the channel using `select.select` with a configurable timeout. `CommandAck` → `True` (MCU accepted); `CommandReject` → `False` (MCU rejected); timeout → `None` (stm32_ack left NULL in the audit log). Unrelated messages (HeartbeatAck, HaltNotify) are silently passed through the FrameParser for any higher-level consumer.
+- **No cross-package imports in production code**: `filter.py` imports `AuditEvent` and `AuditLogger` from `audit-service/logger.py`. The caller (launch script or test conftest) is responsible for adding `audit-service/` to `sys.path`. This avoids both embedding sys.path manipulation in library code and introducing a heavyweight adapter layer.
+
+**Runtime dependency**: `audit-service/logger.py` must be on `sys.path` at import time. Tests satisfy this via `linux-stack/tests/conftest.py` (updated in this step). Production satisfies this via `PYTHONPATH=../audit-service` in the launch environment.
+
+`linux-stack/tests/test_governance.py` — 36 unit tests across 7 test classes: `TestEmptyFrame`, `TestConfidenceGate`, `TestCommandMapping`, `TestMultiDetectionFrame`, `TestLogBeforeAct`, `TestRejectPaths`, `TestTimeout`.
+
+`linux-stack/tests/test_smoke_governance.py` — 7 `@pytest.mark.smoke` tests covering: import, full accept flow (object detection → HALT → ACK), NullPipeline no-op, low-confidence suppression, kill-switch rejection, three-backend composite frame, and log-before-act audit_ref validity.
+
+**QA results**: 184 tests total (linux-stack), 97% coverage across governance + ipc + perception, ruff clean, mypy clean.
+
+**Insight for article.** The governance filter is the component that makes the governance architecture visible. Every detection the perception pipeline produces becomes a record in the append-only audit log. Every command the system issues is linked to that record via `audit_ref`. Every response from the STM32H5 updates that record. The result is a complete, tamper-evident chain of custody: you can reconstruct exactly what the system saw, what it decided, whether it sent a command, and whether the hardware executed it. This is ISO 42001 §9.1 (monitoring and measurement) implemented as a code invariant, not a process requirement. The process cannot break it because the code enforces it.
+
+---
+
 ## 2026-08-05 — Step 5: Perception pipeline interface definitions
 
 **What was built.**

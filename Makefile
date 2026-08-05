@@ -92,7 +92,7 @@ linux-lint: _check-linux-deps
 
 linux-typecheck: _check-linux-deps
 	@echo "==> linux-stack: mypy type check"
-	cd $(LINUX) && $(PYTHON) -m mypy ipc/ perception/ \
+	cd $(LINUX) && PYTHONPATH=../audit-service $(PYTHON) -m mypy ipc/ perception/ governance/ \
 		--ignore-missing-imports --python-version 3.11
 
 linux-security: _check-sec-deps

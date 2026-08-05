@@ -6,6 +6,7 @@ addopts = [
     "--strict-markers",
     "--cov=ipc",
     "--cov=perception",
+    "--cov=governance",
     "--cov-report=term-missing",
     "--cov-report=html:htmlcov",
     "--cov-fail-under=90",
@@ -18,7 +19,7 @@ markers = [
 ]
 
 [tool.coverage.run]
-source = ["ipc", "perception"]
+source = ["ipc", "perception", "governance"]
 omit = ["tests/*"]
 
 [tool.coverage.report]
