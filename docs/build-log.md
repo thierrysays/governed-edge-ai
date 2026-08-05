@@ -62,6 +62,34 @@ Key components:
 - Initial folder structure follows the layout from the project brief: `linux-stack/`, `rt-control/`, `audit-service/`, `dashboard/`, `docs/`.
 - Audit log schema drafted in `audit-service/schema.sql`. Append-only semantics enforced at the service layer; schema includes a session registry table for per-power-cycle traceability.
 
+---
+
+## 2026-08-05 — Step 3: Dashboard backend (FastAPI)
+
+**What was built.**
+
+`audit-service/dashboard/app.py` — FastAPI web service exposing the audit log over the local network (Wi-Fi 6). Five routes:
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/health` | Liveness probe; returns DB path |
+| GET | `/sessions` | All sessions, ordered newest-first |
+| GET | `/events` | Filtered event log: `session_id`, `actor`, `flagged`, `limit`, `offset` |
+| POST | `/events/{id}/flag` | Human-reviewer annotation (the only write path in the dashboard) |
+| GET | `/query?q=` | Natural-language query stub; wired to LLM in Step 5 |
+
+Key design decisions:
+
+- **Dependency injection for `get_db`**: each request gets its own SQLite connection, opened fresh and closed on response completion. This makes the DB path overridable in tests without any global state mutation — the override just replaces the dependency with a lambda pointing to the temp DB.
+- **WAL mode on every connection**: the dashboard opens connections concurrently with the logger. SQLite WAL allows multiple simultaneous readers alongside the logger's single writer — no locking needed.
+- **Actor validation at the HTTP layer**: the `actor` query parameter uses FastAPI's `pattern="^(ai|human_override)$"` — invalid values return a 422 before they reach the DB. This prevents SQL injection via the filter parameter and enforces the schema's CHECK constraint at the API boundary.
+- **Boolean coercion**: SQLite stores booleans as integers (0/1). The `_coerce_event()` helper converts them to Python `bool` before serialisation, so the JSON response contains `true`/`false`, not `0`/`1`. This is the difference between an API that's self-documenting and one that confuses every consumer.
+- **LAN-only CORS**: CORS is configured via `ALLOWED_ORIGINS` environment variable defaulting to `"*"` for development. In deployment on the VENTUNO Q, this will be locked to the local subnet. No outbound calls; no telemetry.
+
+**Testing approach**: 36 new tests using `TestClient` with a dependency override. The seeded fixture uses `AuditLogger` to write test data — the same write path as production, so the test exercises the full stack (logger → SQLite → dashboard API → JSON response). Coverage: 96% across logger + dashboard.
+
+**Insight for article.** The dependency injection pattern is the key to testable service code. The production DB path is hardcoded as a default, but `app.dependency_overrides[get_db] = override` replaces it without touching any global state. The test creates a real DB, writes real events via `AuditLogger`, and then queries them through the full HTTP stack — no mocking of the DB layer. This means the tests are also integration tests for the logger↔dashboard handoff.
+
 **Open items blocking progress.**
 
 - Official VENTUNO Q pinout not yet published; GPIO and MIPI-CSI connector assumptions are provisional throughout the codebase.

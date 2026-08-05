@@ -9,6 +9,9 @@ addopts = [
     "--cov-report=html:htmlcov",
     "--cov-fail-under=90",
 ]
+filterwarnings = [
+    "ignore:Using `httpx` with `starlette.testclient`",
+]
 markers = [
     "smoke: fast end-to-end sanity check, run first in CI",
     "regression: guards against previously fixed bugs",
