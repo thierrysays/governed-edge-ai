@@ -4,6 +4,31 @@ Running record of decisions, discoveries, and blockers for the Glossolalie Advis
 
 ---
 
+## 2026-08-05 — Step 4: Mock STM32H5 peer
+
+**What was built.**
+
+`linux-stack/ipc/mock_peer.py` — a complete software simulation of the STM32H5 real-time co-processor, exposing a pseudo-terminal (pty) slave endpoint that any serial-port client can connect to exactly as it would connect to a real UART.
+
+Key design decisions:
+
+- **Real pty pair, not a socket or pipe**: `os.openpty()` allocates a kernel pty pair. The slave end (`/dev/pts/N`) is a real tty node; the mock reads and writes through the master end. This means the Linux AI stack can use its actual serial-port driver (`pyserial` or direct `open()`) against the mock — no stub code in production paths.
+- **`tty.setraw()` on the slave**: The pty line discipline applies Unix terminal semantics by default (0x0A → 0x0D 0x0A translation, echo, etc.). `setraw()` disables all of this, making the channel a transparent binary pipe — the same configuration a production serial port would use.
+- **State machine enforced under a single lock**: `ARMED → BUSY → ARMED` (accepted command), `ARMED/BUSY → HALTED` (kill switch or watchdog), `any → FAULT` (explicit injection). All state transitions and stats mutations hold `self._lock`; the response frame is written *outside* the lock to prevent holding it across a blocking `os.write()`.
+- **Reader thread + watchdog as separate threads**: The reader loop uses `select.select` with a 50ms poll interval so it can check `self._running` without blocking indefinitely. The watchdog is a `threading.Timer` that arms on construction and re-arms on every heartbeat — conceptually identical to the hardware timer the real STM32H5 uses.
+- **Reject gate priority order**: (1) `audit_ref == 0` → `AUDIT_REF_ZERO`; (2) kill switch open → `KILL_SWITCH_ACTIVE`; (3) HALTED state → `WATCHDOG_TIMEOUT`; (4) FAULT state → `SYSTEM_FAULT`; (5) confidence below threshold → `CONFIDENCE_BELOW_THRESHOLD`. The audit-ref check is first and unconditional — no path bypasses it, regardless of system state.
+- **Float32 boundary at confidence threshold**: The IPC codec encodes `confidence` as IEEE 754 float32. The value `0.70` encodes to `0.6999...` after float32 round-trip, which falls below the default `0.70` threshold and is correctly rejected. Tests use `0.75` (exactly representable in float32) to exercise the accept-at-threshold path.
+
+`linux-stack/tests/test_mock_peer.py` — 35 unit tests across 8 test classes (TestHeartbeat, TestStatusQuery, TestCommandAccept, TestCommandReject, TestKillSwitch, TestWatchdog, TestStats, TestLifecycle). All exercise a real pty pair via `select.select` with configurable timeouts — no mocking of the pty layer.
+
+`linux-stack/tests/test_smoke_mock.py` — 5 `@pytest.mark.smoke` tests covering the core governance paths: liveness (heartbeat roundtrip), log-before-act enforcement (audit_ref=0 rejection), full command lifecycle (heartbeat → command → ACK → status query), and kill-switch halt-and-reject.
+
+**QA results**: 92 tests total (linux-stack), 97.5% coverage, ruff clean.
+
+**Insight for article.** The mock peer is the offline development enabler for the entire governance stack. Without it, every integration test requires a physical STM32H5 board connected via UART — which means tests can only run on one specific machine, CI is impossible, and the hardware becomes the bottleneck. With the mock, the Linux AI stack, the audit logger, and the IPC codec can all be developed, tested, and iterated on independently of the hardware. The governance invariants (log-before-act, kill-switch supremacy, watchdog) are exercised in milliseconds on any machine. This is the same pattern the automotive industry uses — HIL (Hardware-in-the-Loop) testing for firmware, SIL (Software-in-the-Loop) for application code. The mock peer is the SIL simulator for the STM32H5.
+
+---
+
 ## 2026-08-05 — Step 1: Audit logger and QA harness
 
 **What was built.**
