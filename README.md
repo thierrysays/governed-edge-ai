@@ -4,7 +4,7 @@ Reference architecture demonstrating that AI governance principles can be enforc
 
 The board is an Arduino VENTUNO Q: Qualcomm Dragonwing IQ-8275 NPU (40 TOPS) on the Linux side for perception and inference; STM32H5 real-time co-processor for actuation and kill-switch logic. A relay wired to the STM32H5 cuts actuator power independently of any software state. The AI pipeline can recommend; it cannot execute.
 
-This project began with the Arduino 21st-anniversary VENTUNO Q giveaway. It is the first embedded project from Glossolalie Advisory, and the premise is explicit: the governance frameworks argued for in boardrooms should survive contact with hardware.
+This project began with the Arduino 21st-anniversary VENTUNO Q announcement and giveaway. It is the first embedded project from Glossolalie Advisory, and the premise is explicit: the governance frameworks argued for in boardrooms should survive contact with hardware.
 
 ## Why this matters
 
