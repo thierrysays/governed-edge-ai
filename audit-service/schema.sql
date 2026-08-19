@@ -1,15 +1,23 @@
 -- Governed Edge AI: audit log schema
 -- Append-only. The logging service issues no UPDATE or DELETE statements.
 -- Stored on a dedicated NVMe SSD, separate from the OS and model volumes.
+--
+-- Migration note: 'oversight' was added to the actor and detection_type CHECK
+-- constraints when the UNO R4 WiFi oversight node was introduced. CREATE TABLE
+-- IF NOT EXISTS leaves an existing database on the old constraints, and SQLite
+-- cannot alter a CHECK in place. A database created before that change must be
+-- rebuilt: CREATE the new table under a temporary name, INSERT ... SELECT the
+-- existing rows, drop the old table, rename. Sessions are per power cycle in
+-- the demonstrator, so in practice a new session starts a new file.
 
 CREATE TABLE IF NOT EXISTS audit_log (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     ts              TEXT    NOT NULL,            -- ISO 8601 UTC timestamp
     session_id      TEXT    NOT NULL,            -- UUID per power cycle
-    actor           TEXT    NOT NULL             -- 'ai' | 'human_override'
-                    CHECK (actor IN ('ai', 'human_override')),
-    detection_type  TEXT    NOT NULL             -- 'object' | 'gesture' | 'pose'
-                    CHECK (detection_type IN ('object', 'gesture', 'pose')),
+    actor           TEXT    NOT NULL             -- 'ai' | 'human_override' | 'oversight'
+                    CHECK (actor IN ('ai', 'human_override', 'oversight')),
+    detection_type  TEXT    NOT NULL             -- 'object' | 'gesture' | 'pose' | 'oversight'
+                    CHECK (detection_type IN ('object', 'gesture', 'pose', 'oversight')),
     detection_label TEXT    NOT NULL,            -- e.g. 'person', 'thumbs_up', 'proximity_breach'
     confidence      REAL    NOT NULL             -- 0.0 to 1.0
                     CHECK (confidence >= 0.0 AND confidence <= 1.0),

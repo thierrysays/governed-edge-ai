@@ -4,6 +4,55 @@ Running record of decisions, discoveries, and blockers for the Glossolalie Advis
 
 ---
 
+## 2026-08-19: Step 9: Oversight tier (Arduino UNO R4 WiFi)
+
+**What was built.**
+
+A fourth board and everything that followed from it: `linux-stack/oversight/` (attestation chain, supervisor link, reference model), `r4-supervisor/` (Arduino C++ firmware and a host parity harness), five new IPC message types, two new governance invariants, a third audit actor, and 298 new tests.
+
+**Why a fourth board at all.**
+
+The three-board version had a weakness that is easier to see once written down. The human override lived inside the system it was meant to override. The gesture HALT travelled through the AI perception pipeline; the kill switch sat on the actuation MCU that the governance node itself commands. Both were real controls. Both went down with the thing they supervised.
+
+In Three Lines Model terms, the architecture had a strong second line and no third. That is the specific confusion that makes an oversight function unreliable in practice: it works exactly until the thing it supervises is the thing that failed. The test that separates a second-line control from third-line assurance is not where it sits on a diagram, it is whether the supervised function can switch it off.
+
+**Why the R4 rather than something more capable.**
+
+Because it is the least capable board on the bench. The whole oversight firmware is a few hundred lines of C++ with no scheduler, no filesystem and no network stack in the default build. It is small enough to read in one sitting, which is what a supervisor should be. An oversight function running on the most powerful board in the system would be the wrong shape: the argument is that the supervisor should be simpler than the supervised, so its correctness is checkable by inspection.
+
+The board's specifics helped: a 12x8 LED matrix makes governance state legible from across a room with no screen, native USB-C gives the same link discipline as the other boards, GPIO with nothing else on it drives the kill line directly, and the Wi-Fi is there if wanted and off by default.
+
+Key design decisions:
+
+- **Two enforcement paths, not one.** A soft veto over serial, and a hard GPIO line into the Alvik kill-switch input. Building only the soft path would have produced a control with a single point of failure that a document would then have described as independent. The soft path is forgeable by anyone with the cable; the hard path is not reachable from any link. The security tests demonstrate both facts rather than asserting either.
+- **The override latches, and no message clears it.** The protocol contains no `OVERRIDE_DENY` and no clear that the governance tier can send. Releasing an override is a physical act at the board. `test_no_message_type_clears_an_override` throws the entire outbound vocabulary at a latched node, including replayed R4 messages, and asserts nothing moves.
+- **Fail-closed by default on link loss.** Silence from the oversight node counts as an override on the governance side. A supervisor that cannot be reached is not evidence that oversight is satisfied. `--oversight-optional` exists for bench work and the service warns when it is used.
+- **The kill line is held from boot until the first heartbeat.** Not a latch, and no arming step: the line simply releases on first contact and re-asserts on any override. A governance tier that has not yet said anything has not yet earned the authority to move a robot. This was the third attempt at the boot behaviour. Latching at boot was correct but forced a manual arming step before every run; releasing at boot was convenient and wrong. Deriving the line from `override || !heartbeat_seen` gave both properties in one expression.
+- **Witness-before-act.** The audit chain head is published to the oversight node before the command frame is written. The digest reaches the witness before the command reaches the actuator, which is the ordering that turns retained digests into evidence rather than a log of a log.
+- **The chain commits to the stored row, not the intended one.** `AuditLogger.fetch_event()` was added so the digest covers what SQLite holds rather than what the process believes it wrote. One indexed `SELECT` per event. Hashing the caller's `AuditEvent` would have been free and would have proved nothing about the database.
+- **`stm32_ack`, `flag` and `notes` are excluded from the chain.** All three are written after the row is created, so committing to them would break the chain on every legitimate update. A regression test writes an ACK and a flag after witnessing, then verifies the chain still reconciles.
+- **A third audit actor.** `oversight` distinguishes machine-initiated supervisor action from a person pressing a button. An auditor reading the log after an incident needs to tell "someone stopped this" from "the supervisor stopped this because the governance tier went quiet". This changed a CHECK constraint, and SQLite cannot alter one in place: the migration note is in `schema.sql` and in the architecture document.
+- **The Python model is the specification; the C++ is the port.** `MockR4Supervisor` carries the test suite and `supervisor_state.cpp` is written against it. `test_r4_firmware_parity.py` compiles the firmware logic for the host with `-Wall -Wextra -Werror` and checks byte-identical frames, identical verdict sequences, identical state transitions and identical constants. Two implementations of one state machine drift unless something checks them.
+- **The R4's live attestation verdict is limited to what the digest stream can prove.** It stores digests, not rows, so it detects gaps and rollback live and nothing else. Detecting an altered row is an offline reconciliation against the retained digests. Claiming more would have been a claim the board cannot support.
+- **The filter does not block on `ATTEST_ACK` before transmitting.** A `GAP` or `CHAIN_BREAK` verdict stops the next command, not the one in flight. Blocking would put the oversight link inside the actuation latency budget, which is the wrong trade for a link whose job is to observe. This one is recorded as an open decision rather than a settled one.
+
+**Two defects found, both by the adversarial tests rather than by review.**
+
+| Defect | Consequence | Fix |
+|---|---|---|
+| `FrameParser` had no maximum-frame guard | A header claiming 0xFFFF bytes made the parser wait forever for bytes that never came. Every later frame was swallowed with them: one corrupt or hostile length field took a link down until restart, on both links. | Discard the magic byte and resynchronise when the length exceeds `MAX_PAYLOAD`. Five regression tests in `TestOversizedLengthGuard`. The C++ port already had the equivalent guard, which is how the asymmetry surfaced. |
+| A failed `channel.write()` propagated out of `_send_command` | The row already said `command_sent=1`, so the audit log claimed a command had been sent that never reached the wire. | Catch `OSError` and `flag_event()` with the error. The log is append-only, so flagging is the only honest correction available. |
+
+Neither would have been found by testing the happy path. Both were found by asking what an attacker or a pulled cable would do.
+
+**QA results.** 611 tests total, 100% line coverage on both modules, the coverage gate raised from 90 to 98. ruff clean, mypy strict clean, bandit clean, pip-audit clean. Two pre-existing bandit findings were resolved rather than suppressed: the SQL column list in `fetch_event` is written out literally rather than interpolated, and the two `0.0.0.0` binds now carry a documented rationale next to the code.
+
+**Insight for article.** The interesting part of this step was not the firmware. It was discovering, by writing the threat model down, that the previous version's independence claim was weaker than the diagram suggested. The controls were real and the diagram was honest about what existed; it was silent about what those controls depended on. That silence is where most governance architecture goes wrong, and it survives review precisely because everything on the page is true.
+
+The correction is cheap in hardware and expensive in honesty. A twenty-euro board and four jumper wires buy a third line of defence. What they cost is the obligation to write down that the serial link is forgeable, the chain is unkeyed, the digest window is 64 entries deep, and no timing figure in the specification has been measured on hardware. A control whose limits are undocumented is a control nobody can rely on, and a governance architecture that only publishes its strengths is doing the thing it exists to prevent.
+
+---
+
 ## 2026-08-05: Step 6: Governance filter (perception → audit → IPC dispatch)
 
 **What was built.**

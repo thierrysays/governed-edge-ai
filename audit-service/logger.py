@@ -8,6 +8,15 @@ Governance contract:
   - flag is one-way: 0 → 1 only; never reset to 0.
   - stm32_ack starts NULL (no response yet) and is filled by
     update_stm32_ack() once the STM32H5 ACK or REJECT arrives.
+  - fetch_event() is the only read path on the write side. It exists so the
+    oversight tier can hash the row exactly as stored, rather than hashing
+    the caller's idea of what it wrote.
+
+Actors:
+  'ai'              inference-initiated events from the perception pipeline
+  'human_override'  operator action, including the UNO R4 WiFi override button
+  'oversight'       machine-initiated action by the UNO R4 WiFi supervisor
+                    (governance heartbeat lost, attestation mismatch)
 """
 
 import sqlite3
@@ -17,12 +26,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
-Actor = Literal["ai", "human_override"]
-DetectionType = Literal["object", "gesture", "pose"]
+Actor = Literal["ai", "human_override", "oversight"]
+DetectionType = Literal["object", "gesture", "pose", "oversight"]
 
 _SCHEMA = Path(__file__).parent / "schema.sql"
-_VALID_ACTORS: frozenset[str] = frozenset({"ai", "human_override"})
-_VALID_DETECTION_TYPES: frozenset[str] = frozenset({"object", "gesture", "pose"})
+_VALID_ACTORS: frozenset[str] = frozenset({"ai", "human_override", "oversight"})
+_VALID_DETECTION_TYPES: frozenset[str] = frozenset(
+    {"object", "gesture", "pose", "oversight"}
+)
 
 
 @dataclass(frozen=True)
@@ -107,6 +118,28 @@ class AuditLogger:
             ),
         )
         return int(cur.lastrowid)  # type: ignore[arg-type]
+
+    def fetch_event(self, event_id: int) -> sqlite3.Row | None:
+        """Read back one audit row, or None if the id does not exist.
+
+        Read-only, and the only SELECT on the write path. The oversight tier
+        uses it to fold the stored row into the attestation hash chain, so
+        that the chain commits to what SQLite actually holds.
+        """
+        # The column list is written out rather than interpolated: the query
+        # is a fixed string, so there is no construction step to get wrong.
+        # It excludes stm32_ack and flag, both written after the row is
+        # created, because the attestation chain must not commit to them.
+        cur = self._conn.cursor()
+        cur.row_factory = sqlite3.Row
+        cur.execute(
+            "SELECT id, ts, session_id, actor, detection_type, detection_label,"
+            " confidence, command, command_sent FROM audit_log WHERE id = ?",
+            (event_id,),
+        )
+        row: sqlite3.Row | None = cur.fetchone()
+        cur.close()
+        return row
 
     def update_stm32_ack(self, event_id: int, ack: bool) -> None:
         """Record the STM32H5 COMMAND_ACK (True) or COMMAND_REJECT (False).

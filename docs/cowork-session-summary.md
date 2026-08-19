@@ -1,44 +1,59 @@
-# Governed Edge AI: Project Summary (All Eight Steps)
+# Governed Edge AI: Project Summary (All Nine Steps)
 
 **Project:** governed-edge-ai Physical AI Demonstrator
 **Repository:** https://github.com/thierrysays/governed-edge-ai (public, main branch)
 **Last updated:** 19 August 2026
-**Status:** Complete. All eight build steps shipped. 313 tests, 95%+ coverage per module, full QA suite green.
+**Status:** Complete. All nine build steps shipped. Four boards, 611 tests, 100% line coverage on both modules, full QA suite green.
 
 ---
 
 ## What This Project Is
 
-A working demonstrator of governance-first Physical AI across three Arduino boards. The core thesis: for physical AI systems, safety invariants must be enforced at the hardware and protocol level, not only in policy documents or governance frameworks.
+A working demonstrator of governance-first Physical AI across four Arduino boards. Two theses, one added in step 9:
 
-No actuation occurs without a prior audit log entry. This is enforced at the IPC protocol layer, not in policy: the STM32H5 on the VENTUNO Q rejects any `CommandRequest` frame with `audit_ref == 0` before passing it downstream. The Alvik firmware enforces the same check independently.
+1. For physical AI systems, safety invariants must be enforced at the hardware and protocol level, not only in policy documents.
+2. The function that supervises a system must not depend on that system.
 
-**Stack:** Python 3.11, SQLite WAL-mode, binary IPC with CRC-16/CCITT, TCP JSON transport, MicroPython firmware, pytest, ruff, mypy, bandit, pip-audit. 313 tests across two modules, hardware-free test suite via pty-based co-processor mock and loopback TCP transport.
+No actuation occurs without a prior audit log entry, enforced at the IPC protocol layer: the STM32 rejects any `CommandRequest` frame with `audit_ref == 0`. No audit log entry goes unwitnessed by a board the governance host does not control, and no message that host can send releases the oversight override.
+
+**Stack:** Python 3.11, SQLite WAL-mode, binary IPC with CRC-16/CCITT, TCP JSON transport, MicroPython firmware, Arduino C++ firmware, SHA-256 attestation chain, pytest, ruff, mypy strict, bandit, pip-audit. 611 tests across two modules, hardware-free via two pty-based co-processor models and loopback TCP.
 
 ---
 
-## Three-Board Architecture
+## Four-Board Architecture
 
 ```
+                          UNO R4 WiFi (Tier 0)
+                          ─────────────────────────
+                          Oversight node
+                          Override button, LED matrix
+                          64 retained audit digests
+                            ▲                   │
+        heartbeat + audit   │                   │ soft veto (serial)
+        chain digests       │                   │ hard kill line (GPIO)
+                            │                   ▼
 UNO Q 4GB          VENTUNO Q              Alvik
 ────────────────   ────────────────────   ─────────────────────
 Camera (ISP)  ──►  GovernanceFilter  ──►  STM32F411 (MicroPython)
 YOLO-X             AuditLogger            Motors / ToF / IMU
-MediaPipe          STM32H5 dual gate      CommandAck / CommandReject
-PoseNet            audit_ref >= 1 enforced
+MediaPipe          Attestation chain      CommandAck / CommandReject
+PoseNet            audit_ref >= 1         kill-switch pin (from Tier 0)
 Qualcomm QRB2210   Qualcomm IQ8 40 TOPS   ESP32-S3 + STM32F411
 STM32U585          STM32H5
 ```
 
-**All three boards are owned.** No external actuator hardware required beyond the Alvik's built-in motors.
+**All four boards are owned.** No external actuator hardware required beyond the Alvik's built-in motors. The R4 needs two buttons and four jumper wires.
 
 | Board | Role | Key specs |
 |---|---|---|
 | Arduino UNO Q 4GB | Perception node | Qualcomm QRB2210, dual ISP 13 MP / 30 fps, STM32U585, 4 GB LPDDR4, Wi-Fi 5 |
 | Arduino VENTUNO Q | Governance brain | Qualcomm IQ-8275 NPU 40 TOPS, STM32H5, 16 GB RAM |
 | Arduino Alvik | Physical body | ESP32-S3 + STM32F411, wheeled robot, ToF 8x8, 6-axis IMU, line follower |
+| Arduino UNO R4 WiFi | Oversight node | Renesas RA4M1 + ESP32-S3, 12x8 LED matrix, 32 KB SRAM |
 
-**Data flow:** UNO Q 4GB captures camera frames and runs multi-backend inference. DetectionResult objects are sent to VENTUNO Q over TCP (port 9100, length-prefixed JSON). GovernanceFilter logs to SQLite, gates on confidence, and transmits audited CommandRequest frames over IPC. VENTUNO Q STM32H5 validates audit_ref, enforces an independent confidence gate, and passes the command to Alvik via USB-C serial. Alvik STM32F411 enforces its own four-gate check, executes the motor command, and returns CommandAck or CommandReject.
+**Data flow:** UNO Q 4GB captures camera frames and runs multi-backend inference. DetectionResult objects go to the VENTUNO Q over TCP (port 9100, length-prefixed JSON). GovernanceFilter polls the oversight node, logs to SQLite, folds the stored row into a SHA-256 chain and publishes the head to the R4, then transmits an audited CommandRequest. Alvik STM32F411 enforces its own four gates, executes, and returns CommandAck or CommandReject.
+
+**Why the R4 is the least capable board here, deliberately:** the oversight firmware is a few hundred lines of C++ with no scheduler, no filesystem and no network stack in the default build. Small enough to read in one sitting, which is what a supervisor should be. The argument is that the supervisor should be simpler than the supervised, so its correctness is checkable by inspection.
 
 ---
 
@@ -52,12 +67,17 @@ STM32U585          STM32H5
 | One command per frame | Segregation of duties | Highest-confidence detection only; all others logged as suppressed |
 | Full suppression record | Auditability | Every detection logged regardless of whether a command was sent |
 | ACK/REJECT tracking | ISO 42001 monitoring | `stm32_ack` column updated after MCU response; NULL on timeout (forensically meaningful) |
-| Human override authority | ISO 42001, COBIT APO | Gesture-triggered HALT via perception pipeline; kill-switch state machine on STM32H5 |
+| Human override authority | ISO 42001, COBIT APO | Physical NC button on the UNO R4 WiFi, outside the AI stack. Latches; no protocol message clears it. |
 | Alvik firmware gate | Defence-in-depth (Tier 3) | Four independent governance gates before any motor command executes |
+| Independent oversight function | ISO 42001 Clause 9.2, IIA Three Lines | Tier 0 is not on the command path, uses its own link, enforces through a GPIO line no message can reach |
+| Witness-before-act | ISO 42001 Clause 9.1 | The audit chain head reaches the oversight node before the command frame is written |
+| Off-host tamper evidence | ISO 42001 Clause 9.1 | 64 SHA-256 chain digests retained on a board the governance host does not control |
+| Governance liveness | COBIT DSS02 | The oversight node latches an override if the governance tier stops reporting for 2 s. A software restart does not clear it. |
+| Fail-closed on oversight loss | ISO 42001 Clause 8.4 | Silence from the oversight node counts as a veto on the governance side |
 
 ---
 
-## Build Sequence (Eight Steps)
+## Build Sequence (Nine Steps)
 
 ### Step 1: Audit Logger (`audit-service/logger.py`)
 
@@ -79,7 +99,7 @@ QA: 72 tests across logger, dashboard, and smoke suites. 96.13% coverage.
 
 ### Step 2: IPC Codec (`linux-stack/ipc/codec.py`)
 
-Binary protocol between the Linux NPU and the STM32H5 co-processor. Eight message types:
+Binary protocol between the boards. Eight message types at this step; five more were added on the oversight link in step 9.
 
 | Message | Direction | Purpose |
 |---|---|---|
@@ -242,22 +262,47 @@ VENTUNO Q governance service (`ventuno_q_service.py`): listens on TCP port 9100,
 
 ---
 
+### Step 9: Oversight Tier (`linux-stack/oversight/`, `r4-supervisor/`)
+
+The fourth board and everything that followed: an attestation hash chain, a supervisor link, a pty-based reference model, an Arduino C++ firmware, five new IPC message types, two new governance invariants and a third audit actor.
+
+**The weakness it corrects.** In the three-board version the human override lived inside the system it was meant to override. The gesture HALT travelled through the AI perception pipeline; the kill switch sat on the actuation MCU the governance node commands. Both were real controls, and both went down with the thing they supervised. In Three Lines Model terms, the architecture had a strong second line and no third.
+
+**Two enforcement paths:**
+
+| Path | Mechanism | Survives |
+|---|---|---|
+| Soft veto | `OVERRIDE_ASSERT` over serial; the filter stops transmitting | A hung or misbehaving perception tier |
+| Hard line | R4 D3 into the Alvik kill-switch input | A compromised governance host, a cut cable, a forged `OVERRIDE_CLEAR` |
+
+**Attestation.** Each stored audit row is read back from SQLite and folded into `digest_n = SHA-256(digest_{n-1} || canonical(row_n))`. The head is published to the R4, which retains the last 64 off-host. Reconciling a recomputed chain against those digests detects edits, deletions, backdating and reordering. The chain is unkeyed: it protects rows already witnessed, not rows written after a host compromise. That limit is documented rather than glossed.
+
+**Firmware parity.** `MockR4Supervisor` is the executable specification; the C++ is the port. `test_r4_firmware_parity.py` compiles the firmware logic for the host with `-Wall -Wextra -Werror` and checks byte-identical frames, identical verdict sequences, identical state transitions and identical constants.
+
+**Two defects found by the adversarial tests, not by review:** a missing frame-length guard that let one hostile header wedge a link permanently, and a failed transmit that left the audit log claiming a command had been sent. Both fixed, both with regression tests.
+
+---
+
 ## QA Baseline
 
 | Module | Tests | Coverage |
 |---|---|---|
-| linux-stack | 241 | 95.76% |
-| audit-service | 72 | 96.13% |
-| **Total** | **313** | **95%+ per module** |
+| linux-stack | 512 | 100% |
+| audit-service | 99 | 100% |
+| **Total** | **611** | **100% on both, gate at 98%** |
 
-All checks pass: ruff, mypy, bandit (no issues), pip-audit (no CVEs).
+All checks pass: ruff, mypy strict, bandit (no issues), pip-audit (no CVEs).
 
 ```bash
 make qa        # lint + typecheck + security + full test suite
 make smoke     # fast sanity pass, hardware-free
 ```
 
-All tests run without physical hardware. CI reproduces the full stack: synthetic camera frames, pty-based mock STM32H5, loopback TCP transport.
+All tests run without physical hardware. CI reproduces the full stack: synthetic camera frames, a pty-based mock STM32H5, a pty-based mock oversight node, loopback TCP transport, and a host build of the R4 firmware logic.
+
+Two suites are worth naming. `test_security_oversight.py` attacks the design from four threat positions and asserts what does *not* hold as well as what does. `test_r4_firmware_parity.py` holds the C++ to the Python model.
+
+**Not tested:** the Arduino hardware layer. Pin timing, the LED matrix driver, Wi-Fi, serial throughput at 921600 baud and the electrical behaviour of the kill line all need the physical rig. Every timing figure in the protocol specification is a design target, not a measurement.
 
 ---
 
@@ -271,13 +316,20 @@ governed-edge-ai/
 │   ├── build-log.md               # Step-by-step design decisions and QA results
 │   ├── ipc-protocol.md            # IPC binary protocol reference
 │   ├── governance-mapping.md      # Framework control mapping
-│   ├── cowork-bom-arduino.md      # Peripherals BOM brief (cameras, cables, power)
+│   ├── deployment-guide.md        # Step-by-step build from bare metal, for a first-time reader
+│   ├── cowork-bom-arduino.md      # Peripherals BOM brief (cameras, cables, power, oversight parts)
 │   └── cowork-session-summary.md  # This document
 ├── alvik-firmware/
 │   ├── ipc_codec.py               # MicroPython IPC codec (CPython-testable)
 │   ├── motor_map.py               # IPC ActionType to motor API mapping
 │   ├── main.py                    # Alvik governance firmware (4 gates)
 │   └── pyproject.toml
+├── r4-supervisor/                 # UNO R4 WiFi oversight firmware (Arduino C++)
+│   ├── r4_supervisor.ino          # Pins, LED matrix, serial, optional Wi-Fi console
+│   ├── supervisor_state.h/.cpp    # State machine, host-compilable (no Arduino headers)
+│   ├── ipc_frame.h/.cpp           # IPC codec, oversight subset only
+│   ├── test/parity_harness.cpp    # Host driver for the parity test suite
+│   └── README.md
 ├── audit-service/
 │   ├── logger.py                  # AuditLogger, AuditEvent, session management
 │   ├── dashboard/                 # Flask read-only audit dashboard
@@ -285,10 +337,10 @@ governed-edge-ai/
 │   │   └── models.py
 │   ├── requirements.txt
 │   ├── pyproject.toml
-│   └── tests/                     # 72 tests, 96.13% coverage
+│   └── tests/                     # 99 tests, 100% coverage
 └── linux-stack/
     ├── ipc/
-    │   ├── codec.py                # Binary IPC protocol, 8 message types, CRC-16/CCITT
+    │   ├── codec.py                # Binary IPC protocol, 13 message types, CRC-16/CCITT
     │   └── mock_peer.py            # Pty-based STM32H5 simulator
     ├── perception/
     │   ├── base.py                 # DetectionResult dataclass, PerceptionPipeline ABC
@@ -299,10 +351,14 @@ governed-edge-ai/
     │   └── uno_q_service.py        # Multi-backend pipeline, stub fallback, camera loop
     ├── governance/
     │   ├── filter.py               # GovernanceFilter, DEFAULT_COMMAND_MAP
-    │   └── ventuno_q_service.py    # TCP receive, filter, IPC dispatch to Alvik
+    │   └── ventuno_q_service.py    # TCP receive, filter, IPC dispatch to Alvik and R4
+    ├── oversight/
+    │   ├── attestation.py          # SHA-256 audit chain, offline tamper reconciliation
+    │   ├── supervisor_link.py      # VENTUNO Q side of the oversight link, fail-closed
+    │   └── mock_supervisor.py      # Pty-based R4 model, the firmware's specification
     ├── requirements.txt
     ├── pyproject.toml
-    └── tests/                      # 241 tests, 95.76% coverage
+    └── tests/                      # 512 tests, 100% coverage
 ```
 
 ---
@@ -352,7 +408,7 @@ Note: do not tag Massimo Banzi (no longer with Arduino).
 **Title:** "Building Governance-First Physical AI: A Step-by-Step Architecture on the Arduino VENTUNO Q"
 **Format:** Markdown suitable for glossolalie.pro, dev.to, or Substack
 
-Structured around the eight-step build sequence. Each section includes code snippets, design rationale, and test patterns. Closes with "What This Architecture Does Not Solve Yet" section.
+Structured around the build sequence as it stood at step 8. Step 9 (the oversight tier) postdates the article and is the natural subject of a follow-up. Each section includes code snippets, design rationale, and test patterns. Closes with "What This Architecture Does Not Solve Yet" section.
 
 ---
 
@@ -372,6 +428,16 @@ Structured around the eight-step build sequence. Each section includes code snip
 
 **Why Alvik firmware has four independent gates:** The governance argument requires that safety invariants survive to the physical actuator, not just to the governance brain. The Alvik STM32F411 gate is the last line of defence: it runs on a separate processor, in a separate language (MicroPython), with no shared code path with the Linux governance filter.
 
+**Why the oversight node gets two enforcement paths, not one:** the soft veto travels on a serial link whose trust boundary is the physical cable. Anyone who can write to it can forge an `OVERRIDE_CLEAR`, and the test suite demonstrates exactly that. The hard GPIO line into the Alvik's kill-switch input is not reachable from any link. Building only the soft path would have produced a single point of failure that the diagram would then have described as independent.
+
+**Why the override latches and no message clears it:** the protocol contains no `OVERRIDE_DENY` and no clear the governance tier can send. Releasing an override is a physical act at the oversight board. The test that separates a second-line control from third-line assurance is whether the supervised function can switch it off, and `test_no_message_type_clears_an_override` asks that question in code.
+
+**Why the attestation chain hashes the stored row, not the intended one:** `fetch_event()` reads the row back from SQLite before hashing. Hashing the caller's `AuditEvent` would have been free and would have proved nothing about what the database actually holds. The cost is one indexed SELECT per event.
+
+**Why `stm32_ack`, `flag` and `notes` are excluded from the chain:** all three are written after the row is created, so committing to them would break the chain on every legitimate update. The chain covers what the row asserted at the moment the command decision was taken.
+
+**Why the kill line is held from boot until the first heartbeat:** not a latch and no arming step, just `override || !heartbeat_seen`. A governance tier that has not yet said anything has not yet earned the authority to move a robot. Latching at boot was correct but forced a manual arming step before every run; releasing at boot was convenient and wrong.
+
 **Why the network transport is length-prefixed JSON, not protobuf or gRPC:** Simplicity for a demonstrator without hardware access. The `DetectionResult` dataclass is JSON-serialisable with no schema compilation step. The 4-byte length prefix gives framing without a TLS or HTTP dependency. Upgrade path to gRPC is straightforward: the `DetectionResultServer/Client` interface is the only change surface.
 
 ---
@@ -384,7 +450,10 @@ Structured around the eight-step build sequence. Each section includes code snip
 | USB-C cables, power supplies | Peripherals BOM pending Cowork agent run against store.arduino.cc |
 | Real hardware validation | All governance logic tested; requires physical boards + camera + cables to validate on-device |
 | Confidence threshold calibration | 0.70 is an engineering judgment; no published standard maps confidence to injury probability for HRC |
-| Audit log tamper-proofing | SQLite WAL is tamper-evident only; production needs signed entries or hardware-secured storage |
+| Attestation digest signing | The chain is unkeyed: it protects rows already witnessed, but a host controlling both the database and the oversight link can forge a consistent chain going forward. HMAC with a key held only by the R4 is the next increment. |
+| Blocking on ATTEST_ACK | The filter does not wait for the oversight node's verdict before transmitting. An attestation fault stops the next command, not the one in flight. Open question. |
+| Retained digest read-back | Currently the Wi-Fi console, which is the least satisfying part of the design |
+| Oversight parts sourcing | One NC and one NO momentary button, four jumper wires. The NC part matters: substituting NO would silently defeat the fail-safe wiring. |
 | Dashboard authentication | None (local-only demonstrator); production needs mTLS or token auth |
-| GitHub repo description | Currently stale; update to: "AI governance controls enforced in hardware across three Arduino boards: UNO Q 4GB (perception), VENTUNO Q (audit log + IPC), Alvik (motor execution). Log-before-act invariant, dual confidence gate, hardware kill switch. 313 tests, 95%+ coverage, CI without physical hardware." |
+| GitHub repo description | Currently stale; update to: "AI governance controls enforced in hardware across four Arduino boards: UNO Q 4GB (perception), VENTUNO Q (audit log + IPC), Alvik (motor execution), UNO R4 WiFi (independent oversight). Log-before-act and witness-before-act invariants, dual confidence gate, off-host tamper evidence, hardware kill line. 611 tests, 100% coverage, CI without physical hardware." |
 | glossolalie.pro page | `governed-edge-ai.html` not yet created; brief in `docs/cowork-website-governed-edge-ai.md` |

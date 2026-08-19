@@ -13,6 +13,11 @@
 #
 #   Per-module variants: audit-{test,smoke,lint,typecheck,security}
 #                        linux-{test,smoke,lint,typecheck,security}
+#
+#   Firmware: alvik-firmware is MicroPython (ruff lint only, no pytest).
+#             r4-supervisor is Arduino C++ (no toolchain in CI); its state
+#             machine is specified and tested through the Python reference
+#             model in linux-stack/oversight/mock_supervisor.py.
 
 PYTHON      := python3
 AUDIT       := audit-service
@@ -92,12 +97,12 @@ linux-lint: _check-linux-deps
 
 linux-typecheck: _check-linux-deps
 	@echo "==> linux-stack: mypy type check"
-	cd $(LINUX) && PYTHONPATH=../audit-service $(PYTHON) -m mypy ipc/ perception/ governance/ \
+	cd $(LINUX) && PYTHONPATH=../audit-service $(PYTHON) -m mypy ipc/ perception/ governance/ oversight/ \
 		--ignore-missing-imports --python-version 3.11
 
 linux-security: _check-sec-deps
 	@echo "==> linux-stack: bandit SAST"
-	cd $(LINUX) && $(PYTHON) -m bandit -r ipc/ perception/ governance/ -ll -q
+	cd $(LINUX) && $(PYTHON) -m bandit -r ipc/ perception/ governance/ oversight/ -ll -q
 	@echo "==> linux-stack: pip-audit CVE scan"
 	pip-audit --requirement $(LINUX)/requirements.txt
 

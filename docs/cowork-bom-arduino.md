@@ -6,16 +6,25 @@ I am building a Physical AI safety demonstrator called **governed-edge-ai** usin
 
 **Project repo (public):** https://github.com/thierrysays/governed-edge-ai
 
-**All three main boards are already owned: do not include them in the BOM:**
+**All four main boards are already owned: do not include them in the BOM:**
 - Arduino VENTUNO Q (Qualcomm IQ8 NPU 40 TOPS + STM32H5, 16 GB RAM): Governance Brain
 - Arduino UNO Q 4GB (Qualcomm QRB2210 + STM32U585, dual ISP 13 MP, 4 GB): Perception Node
 - Arduino Alvik (ESP32-S3 + STM32F411, mobile robot): Physical Body
+- Arduino UNO R4 WiFi (Renesas RA4M1 + ESP32-S3, 12x8 LED matrix): Oversight Node
 
 ---
 
 ## Architecture
 
 ```
+                         UNO R4 WiFi
+                         Oversight node (Tier 0)
+                         Renesas RA4M1 + ESP32-S3
+                         Override button, LED matrix
+                              ▲            │
+              heartbeat +     │            │ soft veto (serial)
+              audit digests   │            │ hard kill line (GPIO)
+                              │            ▼
 UNO Q 4GB  ──────────►  VENTUNO Q  ──────────►  Alvik
 Perception node          Governance brain         Physical robot body
 (cameras via ISP)        (NPU + audit log)        (motors + ToF + IMU)
@@ -23,7 +32,7 @@ Qualcomm QRB2210         Qualcomm IQ8 40 TOPS     ESP32-S3 + STM32F411
 STM32U585                STM32H5                  wheels, sensors
 ```
 
-Data flow: UNO Q 4GB captures camera frames → runs initial detection → sends DetectionResult to VENTUNO Q → GovernanceFilter logs + gates → sends audited CommandRequest to Alvik → Alvik executes (HALT / MOVE / etc.) → returns CommandAck or CommandReject.
+Data flow: UNO Q 4GB captures camera frames → runs initial detection → sends DetectionResult to VENTUNO Q → GovernanceFilter checks the oversight node, logs, gates, publishes an audit chain digest to the R4 → sends audited CommandRequest to Alvik → Alvik executes (HALT / MOVE / etc.) → returns CommandAck or CommandReject. The R4 can veto at any point, over serial or over its GPIO line straight into the Alvik's kill-switch pin.
 
 ---
 
@@ -61,7 +70,7 @@ The UNO Q 4GB has **2× ISP at 13 MP / 30 fps**. Without a camera, the perceptio
 - **VENTUNO Q:** check if a power adapter is sold separately
 - **Alvik:** runs on an 18650 Li-ion battery (check if pre-installed and if a charger is needed)
 
-### 4. Arduino GIGA Display Bundle (optional — audit dashboard)
+### 4. Arduino GIGA Display Bundle (optional, audit dashboard)
 
 The GIGA R1 WiFi + GIGA Display Shield together provide a **physical audit log display** mounted on the demo rig. The GIGA R1 connects to the VENTUNO Q over Wi-Fi and polls the Flask audit dashboard API; the 3.97" touch display renders live governance events (detection type, confidence, audit_ref, HALT/MOVE decision, ACK/REJECT) without requiring a laptop.
 
@@ -75,7 +84,22 @@ The GIGA R1 WiFi + GIGA Display Shield together provide a **physical audit log d
 - Note individual SKUs for GIGA R1 WiFi and GIGA Display Shield if no bundle is listed
 - Confirm whether the GIGA Display Shield camera connector accepts standard MIPI CSI modules
 
-### 5. Other optional accessories
+### 5. Oversight node parts (UNO R4 WiFi): REQUIRED
+
+The R4 itself is owned. It needs two buttons, wire and a shared ground with the Alvik.
+
+**Find on the Arduino store:**
+- **Momentary push button, normally closed (NC)**: the override button, wired to D2. Normally closed matters: a cut wire, a pulled connector or a failed switch then all read as a press, so the system fails towards stopping. If the Arduino store sells only NO buttons, note it: an NC switch may need to come from an electronics supplier, and it is worth sourcing correctly rather than substituting.
+- **Momentary push button, normally open (NO)**: the clear button, wired to D4. A standard tactile switch is fine.
+- **Jumper wires, male to male**: four minimum. D3 to the Alvik's D4 (kill line), R4 GND to Alvik GND (mandatory common ground), plus the two button returns.
+- **Half-size breadboard**: optional, but avoids soldering.
+- **USB-C cable, data-capable**: VENTUNO Q to R4. Confirm it carries data, not power only.
+
+No resistors are needed: both inputs use the R4's internal pull-ups.
+
+Search terms: "push button", "tactile switch", "normally closed switch", "jumper wires", "breadboard", "grove button".
+
+### 6. Other optional accessories
 
 - **MicroSD card**: for persistent audit log storage beyond SQLite on the VENTUNO Q (if a slot is available)
 - **Mounting hardware / enclosure**: to fix the UNO Q 4GB and VENTUNO Q together for stable demos
@@ -86,7 +110,7 @@ The GIGA R1 WiFi + GIGA Display Shield together provide a **physical audit log d
 ## Your Task
 
 1. Go to **https://store.arduino.cc**
-2. For each of the five categories above, find matching products and note name, SKU, price, and stock status
+2. For each of the six categories above, find matching products and note name, SKU, price, and stock status
 3. Pay particular attention to **camera compatibility with the UNO Q 4GB**: this is the most critical unknown
 4. For the GIGA Display Bundle: confirm whether a bundled SKU exists and whether the display shield camera connector accepts standard MIPI CSI modules
 5. If an item is not available on the Arduino store, note it clearly so I can source it elsewhere
@@ -104,13 +128,18 @@ Produce a complete **Bill of Materials (BOM)** covering peripherals only:
 | 3 | USB-C cable (VENTUNO Q ↔ Alvik) | ... | ... | 1 | ... | IPC channel to robot | ... |
 | 4 | Power supply: UNO Q 4GB | ... | ... | 1 | ... | Power | ... |
 | 5 | Power supply: VENTUNO Q | ... | ... | 1 | ... | Power | ... |
-| 6 | GIGA R1 WiFi (optional) | ... | ... | 1 | ... | Physical audit dashboard | ... |
-| 7 | GIGA Display Shield (optional) | ... | ... | 1 | ... | 3.97" touch screen for audit log | ... |
+| 6 | Momentary button, NC | ... | ... | 1 | ... | Oversight override button (R4 D2) | ... |
+| 7 | Momentary button, NO | ... | ... | 1 | ... | Oversight clear button (R4 D4) | ... |
+| 8 | Jumper wire set | ... | ... | 1 | ... | Kill line, ground, button returns | ... |
+| 9 | USB-C cable (VENTUNO Q ↔ R4) | ... | ... | 1 | ... | Oversight link | ... |
+| 10 | GIGA R1 WiFi (optional) | ... | ... | 1 | ... | Physical audit dashboard | ... |
+| 11 | GIGA Display Shield (optional) | ... | ... | 1 | ... | 3.97" touch screen for audit log | ... |
 | ... | | | | | | | |
 | | | | **TOTAL (required)** | | **€XX.XX** | | |
 | | | | **TOTAL (with optional)** | | **€XX.XX** | | |
 
 **Important notes to include:**
+- For the NC override button: if the Arduino store carries only normally open buttons, say so explicitly and suggest a supplier for a normally closed one. Substituting NO for NC would silently defeat the fail-safe wiring, and the failure would only appear when the button was needed.
 - If no camera is available on the Arduino store: flag it and suggest the closest third-party alternative (Arducam MIPI, Raspberry Pi Camera Module 3, etc.) with approximate price
 - If the Alvik ships with everything needed (battery, USB cable): note "included" so I don't double-buy
 - For the GIGA Display Bundle: note if a bundled SKU exists (likely cheaper) and confirm MIPI camera connector compatibility
