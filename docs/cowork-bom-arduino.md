@@ -1,107 +1,98 @@
-# Cowork Task — Arduino Store BOM for governed-edge-ai (Three-Board Architecture)
+# Cowork Task — Arduino Store BOM for governed-edge-ai (Peripherals Only)
 
 ## Context
 
-I am building a Physical AI safety demonstrator called **governed-edge-ai** — a three-tier distributed architecture where AI governance is enforced across three Arduino boards, from camera to actuator.
+I am building a Physical AI safety demonstrator called **governed-edge-ai** using a three-tier distributed architecture.
 
 **Project repo (public):** https://github.com/thierrysays/governed-edge-ai
 
-**I already own:** the VENTUNO Q board. Do not include it in the BOM.
+**All three main boards are already owned — do not include them in the BOM:**
+- Arduino VENTUNO Q (Qualcomm IQ8 NPU 40 TOPS + STM32H5, 16 GB RAM) — Governance Brain
+- Arduino UNO Q 4GB (Qualcomm QRB2210 + STM32U585, dual ISP 13 MP, 4 GB) — Perception Node
+- Arduino Alvik (ESP32-S3 + STM32F411, mobile robot) — Physical Body
 
 ---
 
-## Three-Board Architecture
+## Architecture
 
 ```
-UNO Q 4GB  →  VENTUNO Q  →  Alvik
-(Perception)  (Governance)  (Actuation)
+UNO Q 4GB  ──────────►  VENTUNO Q  ──────────►  Alvik
+Perception node          Governance brain         Physical robot body
+(cameras via ISP)        (NPU + audit log)        (motors + ToF + IMU)
+Qualcomm QRB2210         Qualcomm IQ8 40 TOPS     ESP32-S3 + STM32F411
+STM32U585                STM32H5                  wheels, sensors
 ```
 
-### Tier 1 — UNO Q 4GB: Perception Node
-- Qualcomm QRB2210 (quad-core Cortex-A53, 2 GHz) + STM32U585 (Cortex-M33)
-- **Dual ISP: 2× 13 MP cameras at 30 fps** — this is the camera input for the AI vision pipeline
-- Runs object detection, gesture recognition, pose estimation on Debian Linux
-- Sends `DetectionResult` objects to the VENTUNO Q over the network
-
-### Tier 2 — VENTUNO Q: Governance Brain *(already owned)*
-- Qualcomm Dragonwing IQ8 NPU (40 TOPS) + STM32H5
-- Runs the GovernanceFilter: audit log → confidence gate → IPC command dispatch
-- STM32H5 enforces dual-layer confidence gate; rejects any command without a valid audit reference
-
-### Tier 3 — Alvik: Physical Body (Actuated Robot)
-- Arduino Nano ESP32 + STM32F411 co-processor
-- Mobile wheeled robot: motors, ToF 8×8 array, 6-axis IMU, color sensor, line follower
-- Receives governance-approved commands (HALT, MOVE, etc.) via USB-C or UART
-- Responds with CommandAck / CommandReject
+Data flow: UNO Q 4GB captures camera frames → runs initial detection → sends DetectionResult to VENTUNO Q → GovernanceFilter logs + gates → sends audited CommandRequest to Alvik → Alvik executes (HALT / MOVE / etc.) → returns CommandAck or CommandReject.
 
 ---
 
-## What to Buy
+## What Still Needs to Be Purchased (Peripherals Only)
 
-### Must-have (project cannot run without these)
+### 1. Camera module(s) for UNO Q 4GB — CRITICAL
 
-1. **Arduino UNO Q 4GB** — the perception node
-   - Needs cameras connected to its dual ISP
-   - Check: does it ship with cameras, or are camera modules sold separately?
+The UNO Q 4GB has **2× ISP at 13 MP / 30 fps**. Without a camera, the perception node has no visual input.
 
-2. **Arduino Alvik** — the physical robot body
-   - Check: does it include everything needed to run out of the box (battery, USB cable)?
+**Find on the Arduino store:**
+- Any camera module officially listed as compatible with the UNO Q 4GB
+- Look for: CSI ribbon cable camera, MIPI camera module, or any camera shield for UNO Q
+- Search terms: "camera", "UNO Q camera", "CSI camera", "IMX", "OV"
+- Need at minimum **1 camera** (ideally 2 to use both ISP channels — one for object detection, one for gesture/pose)
+- Note if no camera is sold by Arduino — I will need to source from a third party (e.g. Arducam, Waveshare)
 
-### Cameras for UNO Q 4GB ISP
+### 2. Interconnect cables
 
-3. **Camera module(s) compatible with UNO Q 4GB ISP**
-   - The UNO Q 4GB has 2× ISP at 13 MP / 30 fps
-   - Look for: official Arduino camera modules, CSI ribbon cable cameras, or any camera shield listed as compatible with the UNO Q
-   - Need at minimum 1 camera for the perception pipeline (object + gesture + pose detection)
-   - Note if Arduino sells a camera add-on specifically for the UNO Q
+**Between UNO Q 4GB and VENTUNO Q:**
+- If communicating over USB-C: standard USB-C to USB-C cable
+- If communicating over UART/GPIO: UART TTL jumper cables or a small breakout
 
-### Connectivity between the three boards
+**Between VENTUNO Q and Alvik:**
+- The Alvik connects via USB-C to the host board
+- Need a USB-C cable (check if Alvik ships with one)
 
-4. **USB-C cable(s)** — VENTUNO Q ↔ UNO Q 4GB, VENTUNO Q ↔ Alvik (if USB used for IPC)
-5. **UART/serial adapter** — if the boards communicate over UART rather than USB
+**Find on the Arduino store:**
+- USB-C to USB-C cable (if sold)
+- GPIO / jumper wire set
+- Any ribbon cable for camera CSI
 
-### Power
+### 3. Power supplies
 
-6. **Power supply for UNO Q 4GB** — check recommended spec (USB-C PD adapter)
-7. **Power supply for VENTUNO Q** — if not already covered by the board purchase
+- **UNO Q 4GB:** check the recommended USB-C PD adapter wattage and whether one is included or sold separately
+- **VENTUNO Q:** check if a power adapter is sold separately
+- **Alvik:** runs on an 18650 Li-ion battery (check if pre-installed and if a charger is needed)
 
-### Optional but useful
+### 4. Optional accessories
 
-8. **Qwiic / I2C expansion cable** — UNO Q 4GB has a Qwiic connector; useful for adding sensors
-9. **UNO shield** — any shield listed as compatible with UNO Q 4GB for prototyping
-10. **Enclosure or chassis** — mounting the VENTUNO Q and UNO Q 4GB together for demos
+- **MicroSD card** — for persistent audit log storage beyond SQLite on the VENTUNO Q (if a slot is available)
+- **Mounting hardware / enclosure** — to fix the UNO Q 4GB and VENTUNO Q together for stable demos
+- **Ethernet adapter** — if Wi-Fi is not used for UNO Q ↔ VENTUNO Q communication (USB-C Ethernet dongle)
 
 ---
 
 ## Your Task
 
 1. Go to **https://store.arduino.cc**
-2. Find and price the following items:
-   - **Arduino UNO Q 4GB** (product page: https://store.arduino.cc/products/uno-q-4gb)
-   - **Arduino Alvik** (product page: https://store.arduino.cc/products/alvik)
-   - Any **camera module** compatible with the UNO Q 4GB ISP (search "camera", "CSI", "UNO Q")
-   - Any **cables or adapters** listed as accessories for these boards
-   - **Power supplies** if sold separately
-3. Note stock status for each item
-4. Note if any item must be sourced elsewhere (I will need to find alternatives)
+2. For each of the four categories above, find matching products and note name, SKU, price, and stock status
+3. Pay particular attention to **camera compatibility with the UNO Q 4GB** — this is the most critical unknown
+4. If an item is not available on the Arduino store, note it clearly so I can source it elsewhere
 
 ---
 
 ## Deliverable
 
-Produce a complete **Bill of Materials (BOM)** in this format:
+Produce a complete **Bill of Materials (BOM)** covering peripherals only:
 
-| # | Product Name | SKU / Part Number | Unit Price (EUR) | Qty | Total (EUR) | Purpose | Stock |
+| # | Product Name | SKU | Unit Price (EUR) | Qty | Total (EUR) | Purpose | Stock |
 |---|---|---|---|---|---|---|---|
-| 1 | Arduino UNO Q 4GB | ... | ... | 1 | ... | Perception node — Tier 1 | In stock / Out of stock |
-| 2 | Arduino Alvik | AKX00066 | ... | 1 | ... | Physical robot body — Tier 3 | ... |
-| 3 | Camera module (UNO Q ISP) | ... | ... | 1–2 | ... | Vision input for perception pipeline | ... |
-| 4 | USB-C cable | ... | ... | 2 | ... | Board interconnect | ... |
+| 1 | Camera module (UNO Q ISP) | ... | ... | 1–2 | ... | Visual input for perception pipeline | ... |
+| 2 | USB-C cable (UNO Q ↔ VENTUNO Q) | ... | ... | 1 | ... | Board interconnect | ... |
+| 3 | USB-C cable (VENTUNO Q ↔ Alvik) | ... | ... | 1 | ... | IPC channel to robot | ... |
+| 4 | Power supply — UNO Q 4GB | ... | ... | 1 | ... | Power | ... |
+| 5 | Power supply — VENTUNO Q | ... | ... | 1 | ... | Power | ... |
 | ... | | | | | | | |
 | | | | **TOTAL** | | **€XX.XX** | | |
 
-Include:
-- Direct product URLs from store.arduino.cc for each item
-- Note any item not available on the Arduino store (needs third-party sourcing)
-- Note any bundle or kit that covers multiple line items
-- The VENTUNO Q is already owned — do not include it
+**Important notes to include:**
+- If no camera is available on the Arduino store: flag it and suggest the closest third-party alternative (Arducam MIPI, Raspberry Pi Camera Module 3, etc.) with approximate price
+- If the Alvik ships with everything needed (battery, USB cable): note "included" so I don't double-buy
+- Direct product URLs from store.arduino.cc for every item found there
