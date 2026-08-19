@@ -25,6 +25,14 @@
  *   CRC <ascii>            print the CRC-16/CCITT of the ASCII argument
  *   STATE                  print the current state line
  *   RETAINED               print every retained digest, oldest first
+ *   LATCH_HALT             open the contact (cut the motor supply)
+ *   LATCH_PERMIT           close the contact
+ *   LATCH_POLL             read both sources now
+ *   LATCH_DUE              poll only if the cadence has elapsed
+ *   LATCH_STATE            print the latch line
+ *   LATCH_STICK <0|1>      weld the contact, or release it
+ *   LATCH_SENSE <0|1>      break the sense line, or repair it
+ *   LATCH_POWERCYCLE       remove and restore power to the module
  *   QUIT
  *
  * Governed Edge AI - Glossolalie Advisory. Apache 2.0.
@@ -39,11 +47,77 @@
 #include <vector>
 
 #include "ipc_frame.h"
+#include "latch.h"
 #include "supervisor_state.h"
 
 static SupervisorState state;
 static IpcParser parser;
 static uint32_t now_ms = 0;
+
+/* ------------------------------------------------------------------ */
+/* Simulated relay, mirroring SimulatedLatch in the Python model.      */
+/* Pessimistic by default: the module's register echoes the command    */
+/* rather than observing the contact.                                  */
+/* ------------------------------------------------------------------ */
+
+struct SimLatch {
+  LatchPosition contact = LATCH_OPEN;
+  LatchPosition reg = LATCH_OPEN;
+  bool echoes = true;
+  bool stuck = false;
+  bool sense_failed = false;
+  unsigned pulses_open = 0;
+  unsigned pulses_close = 0;
+};
+
+static SimLatch sim;
+static Latch latch;
+
+static void sim_pulse_open(void *ctx) {
+  SimLatch *s = static_cast<SimLatch *>(ctx);
+  s->pulses_open++;
+  if (s->echoes) { s->reg = LATCH_OPEN; }
+  if (!s->stuck) { s->contact = LATCH_OPEN; }
+  if (!s->echoes) { s->reg = s->contact; }
+}
+
+static void sim_pulse_close(void *ctx) {
+  SimLatch *s = static_cast<SimLatch *>(ctx);
+  s->pulses_close++;
+  if (s->echoes) { s->reg = LATCH_CLOSED; }
+  if (!s->stuck) { s->contact = LATCH_CLOSED; }
+  if (!s->echoes) { s->reg = s->contact; }
+}
+
+static LatchPosition sim_read_register(void *ctx) {
+  return static_cast<SimLatch *>(ctx)->reg;
+}
+
+static LatchPosition sim_read_sense(void *ctx) {
+  SimLatch *s = static_cast<SimLatch *>(ctx);
+  return s->sense_failed ? LATCH_UNKNOWN : s->contact;
+}
+
+static const char *latch_name(LatchPosition p) {
+  switch (p) {
+    case LATCH_OPEN:   return "OPEN";
+    case LATCH_CLOSED: return "CLOSED";
+    default:           return "UNKNOWN";
+  }
+}
+
+static void print_latch() {
+  std::cout << "LATCH commanded=" << latch_name(latch.commanded)
+            << " reported=" << latch_name(latch.last.reported)
+            << " observed=" << latch_name(latch.last.observed)
+            << " agrees=" << (latch.has_reading && latch_reading_agrees(&latch.last) ? 1 : 0)
+            << " enforcing=" << (latch_enforcing(&latch) ? 1 : 0)
+            << " transitions=" << latch.transitions
+            << " mismatches=" << latch.mismatches
+            << " pulses_open=" << sim.pulses_open
+            << " pulses_close=" << sim.pulses_close
+            << std::endl;
+}
 
 static std::string to_hex(const uint8_t *data, size_t len) {
   static const char *digits = "0123456789abcdef";
@@ -92,6 +166,14 @@ static void print_state() {
 int main() {
   supervisor_init(&state, SUP_HEARTBEAT_TIMEOUT_MS, now_ms);
   ipc_parser_reset(&parser);
+
+  LatchIo io;
+  io.pulse_open = sim_pulse_open;
+  io.pulse_close = sim_pulse_close;
+  io.read_register = sim_read_register;
+  io.read_sense = sim_read_sense;
+  io.ctx = &sim;
+  latch_init(&latch, io);
 
   std::string line;
   while (std::getline(std::cin, line)) {
@@ -184,6 +266,44 @@ int main() {
 
     } else if (cmd == "STATE") {
       print_state();
+
+    } else if (cmd == "LATCH_HALT") {
+      latch_enforce_halt(&latch, now_ms);
+      print_latch();
+
+    } else if (cmd == "LATCH_PERMIT") {
+      latch_permit(&latch, now_ms);
+      print_latch();
+
+    } else if (cmd == "LATCH_POLL") {
+      latch_poll(&latch, now_ms);
+      print_latch();
+
+    } else if (cmd == "LATCH_DUE") {
+      LatchReading r;
+      std::cout << (latch_poll_if_due(&latch, now_ms, &r) ? "POLLED" : "SKIPPED")
+                << std::endl;
+
+    } else if (cmd == "LATCH_STATE") {
+      print_latch();
+
+    } else if (cmd == "LATCH_STICK") {
+      int on = 0;
+      in >> on;
+      sim.stuck = (on != 0);
+      std::cout << "OK" << std::endl;
+
+    } else if (cmd == "LATCH_SENSE") {
+      int broken = 0;
+      in >> broken;
+      sim.sense_failed = (broken != 0);
+      std::cout << "OK" << std::endl;
+
+    } else if (cmd == "LATCH_POWERCYCLE") {
+      /* The contact does not move: that is what bistable means. The module's
+       * MCU reboots and comes back reflecting the real contact. */
+      sim.reg = sim.contact;
+      std::cout << "OK" << std::endl;
 
     } else if (cmd == "RETAINED") {
       uint64_t ref = 0;

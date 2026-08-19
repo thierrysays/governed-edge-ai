@@ -1,9 +1,9 @@
 """
 IPC frame codec: Linux (NPU) ↔ STM32H5 / UNO R4 WiFi binary protocol.
 
-Implements all 13 message types from docs/ipc-protocol.md v0.2:
+Implements all 15 message types from docs/ipc-protocol.md v0.3:
   - 8 actuation messages on the VENTUNO Q ↔ Alvik link (0x01..0x90)
-  - 5 oversight messages on the VENTUNO Q ↔ UNO R4 WiFi link (0x30..0xA2)
+  - 7 oversight messages on the VENTUNO Q ↔ UNO R4 WiFi link (0x30..0xA3)
 
 Transport-agnostic: encode() produces bytes; decode() consumes bytes.
 FrameParser handles incremental UART stream input.
@@ -41,6 +41,8 @@ _ATTEST     = struct.Struct("<Q32s")  # 8+32 = 40 bytes
 _OVR_ASSERT = struct.Struct("<QB")    # 8+1 = 9 bytes
 _OVR_CLEAR  = struct.Struct("<Q")     # 8 bytes
 _ATTEST_ACK = struct.Struct("<QB")    # 8+1 = 9 bytes
+_LATCH_REQ  = struct.Struct("<QB")    # 8+1 = 9 bytes
+_LATCH_REP  = struct.Struct("<BBBII") # 1+1+1+4+4 = 11 bytes
 
 
 # ---------------------------------------------------------------------------
@@ -60,10 +62,12 @@ class MsgType(IntEnum):
     # Oversight link: VENTUNO Q → UNO R4 WiFi
     SUPERVISOR_HEARTBEAT = 0x30
     ATTEST_DIGEST        = 0x31
+    LATCH_REQUEST        = 0x32
     # Oversight link: UNO R4 WiFi → VENTUNO Q
     OVERRIDE_ASSERT = 0xA0
     OVERRIDE_CLEAR  = 0xA1
     ATTEST_ACK      = 0xA2
+    LATCH_REPORT    = 0xA3
 
 
 class Actor(IntEnum):
@@ -108,6 +112,7 @@ class RejectReason(IntEnum):
     SYSTEM_FAULT               = 0x08
     AUDIT_REF_ZERO             = 0x09
     OVERSIGHT_OVERRIDE_ACTIVE  = 0x0A
+    LATCH_OPEN                 = 0x0B   # motor supply is physically cut
 
 
 class HaltTrigger(IntEnum):
@@ -125,6 +130,19 @@ class OverrideReason(IntEnum):
     GOVERNANCE_HEARTBEAT_LOST  = 0x02   # VENTUNO Q stopped reporting
     ATTESTATION_MISMATCH       = 0x03   # audit chain gap or rollback observed
     REMOTE_CONSOLE             = 0x04   # override raised over the R4 Wi-Fi console
+    LATCH_MISMATCH             = 0x05   # the relay is not where it was told to be
+
+
+class LatchPosition(IntEnum):
+    """Contact position of the Modulino Latch Relay, on the wire.
+
+    Mirrors oversight.latch.LatchState. The contact is normally open and in
+    series with the motor supply, so OPEN is the safe state.
+    """
+
+    OPEN    = 0   # motor supply cut, HALT enforced
+    CLOSED  = 1   # motor supply available
+    UNKNOWN = 2   # not yet read, or the sense line is unreadable
 
 
 class AttestVerdict(IntEnum):
@@ -252,6 +270,45 @@ class OverrideClear:
 
 
 @dataclass(frozen=True)
+class LatchRequest:
+    """VENTUNO Q → R4: please put the contact here.
+
+    A request, not a command. The arbiter owns the relay and may refuse: a
+    request to close while an override is latched is ignored, which is the
+    whole point of the arbiter being a separate board.
+    """
+
+    audit_ref: int           # uint64: the row justifying the request, 0 if none
+    desired: LatchPosition
+    msg_type: MsgType = MsgType.LATCH_REQUEST
+
+
+@dataclass(frozen=True)
+class LatchReport:
+    """R4 → VENTUNO Q: what the relay was told, says, and is observed to be.
+
+    Three positions rather than one because they answer different questions.
+    `reported` comes from the module's own MCU and may only echo the last
+    command; `observed` comes from a sense line across the contact. When they
+    differ, that difference is the finding.
+    """
+
+    commanded: LatchPosition
+    reported: LatchPosition
+    observed: LatchPosition
+    transitions: int         # uint32: commanded state changes this session
+    mismatches: int          # uint32: polls where the sources disagreed
+    msg_type: MsgType = MsgType.LATCH_REPORT
+
+    @property
+    def agrees(self) -> bool:
+        return (
+            self.observed is not LatchPosition.UNKNOWN
+            and self.commanded == self.observed == self.reported
+        )
+
+
+@dataclass(frozen=True)
 class AttestAck:
     """UNO R4 WiFi → VENTUNO Q: verdict on the last ATTEST_DIGEST received."""
 
@@ -263,8 +320,8 @@ class AttestAck:
 Message = (
     CommandRequest | CommandAck | CommandReject | HaltNotify
     | Heartbeat | HeartbeatAck | StatusQuery | StatusResponse
-    | SupervisorHeartbeat | AttestDigest
-    | OverrideAssert | OverrideClear | AttestAck
+    | SupervisorHeartbeat | AttestDigest | LatchRequest
+    | OverrideAssert | OverrideClear | AttestAck | LatchReport
 )
 
 
@@ -333,6 +390,13 @@ def _pack(msg: Message) -> bytes:
         return _OVR_CLEAR.pack(msg.timestamp_us)
     if isinstance(msg, AttestAck):
         return _ATTEST_ACK.pack(msg.audit_ref, int(msg.verdict))
+    if isinstance(msg, LatchRequest):
+        return _LATCH_REQ.pack(msg.audit_ref, int(msg.desired))
+    if isinstance(msg, LatchReport):
+        return _LATCH_REP.pack(
+            int(msg.commanded), int(msg.reported), int(msg.observed),
+            msg.transitions, msg.mismatches,
+        )
     if isinstance(msg, (Heartbeat, HeartbeatAck, StatusQuery)):
         return b""
     raise TypeError(f"Cannot encode {type(msg).__name__}")
@@ -391,6 +455,8 @@ def _unpack(msg_type: MsgType, payload: bytes) -> Message:
     _require(payload, 9,  MsgType.OVERRIDE_ASSERT,   msg_type)
     _require(payload, 8,  MsgType.OVERRIDE_CLEAR,    msg_type)
     _require(payload, 9,  MsgType.ATTEST_ACK,        msg_type)
+    _require(payload, 9,  MsgType.LATCH_REQUEST,      msg_type)
+    _require(payload, 11, MsgType.LATCH_REPORT,       msg_type)
 
     if msg_type == MsgType.HEARTBEAT:
         return Heartbeat()
@@ -438,6 +504,16 @@ def _unpack(msg_type: MsgType, payload: bytes) -> Message:
     if msg_type == MsgType.ATTEST_ACK:
         ref, verdict_b = _ATTEST_ACK.unpack(payload)
         return AttestAck(audit_ref=ref, verdict=AttestVerdict(verdict_b))
+    if msg_type == MsgType.LATCH_REQUEST:
+        ref, desired_b = _LATCH_REQ.unpack(payload)
+        return LatchRequest(audit_ref=ref, desired=LatchPosition(desired_b))
+    if msg_type == MsgType.LATCH_REPORT:
+        cmd_b, rep_b, obs_b, transitions, mismatches = _LATCH_REP.unpack(payload)
+        return LatchReport(
+            commanded=LatchPosition(cmd_b), reported=LatchPosition(rep_b),
+            observed=LatchPosition(obs_b), transitions=transitions,
+            mismatches=mismatches,
+        )
     # Unreachable: every MsgType has a decoder above and _require has already
     # validated the payload length for each one.
     raise FrameError(f"No decoder for {msg_type!r}")  # pragma: no cover

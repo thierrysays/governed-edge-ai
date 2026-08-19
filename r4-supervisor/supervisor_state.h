@@ -49,7 +49,8 @@ typedef enum {
   ANN_WATCHING = 0,
   ANN_OVERRIDE = 1,
   ANN_STALE    = 2,
-  ANN_ATTEST   = 3
+  ANN_ATTEST   = 3,
+  ANN_LATCH    = 4
 } Annunciator;
 
 typedef struct {
@@ -121,11 +122,15 @@ bool supervisor_set_button(SupervisorState *s, bool pressed_now);
 
 Annunciator supervisor_annunciator(const SupervisorState *s);
 
-/* State of the GPIO line wired into the Alvik kill-switch input. Asserted
- * while an override is latched, and also before the first heartbeat has ever
- * arrived: a governance tier that has not yet said anything has not yet
- * earned the authority to move a robot. Releases on first contact, with no
- * latch and no arming step. */
+/* True when the motors should be isolated: an override is latched, or no
+ * heartbeat has ever arrived. The sketch drives the latch relay from this on
+ * every pass. A governance tier that has said nothing has not earned the
+ * authority to move a robot, and the relay releases on first contact with no
+ * arming step.
+ *
+ * This states intent. Whether the contact actually moved is a separate
+ * question, answered by latch_enforcing() against the sense line, and the
+ * two differing is exactly the fault worth catching. */
 bool supervisor_kill_line(const SupervisorState *s);
 
 /* Read back a retained digest, oldest first. Returns false if out of range.

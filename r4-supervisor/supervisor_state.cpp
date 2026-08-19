@@ -129,6 +129,9 @@ Annunciator supervisor_annunciator(const SupervisorState *s) {
   if (s->override_reason == OVR_ATTESTATION_MISMATCH) {
     return ANN_ATTEST;
   }
+  if (s->override_reason == OVR_LATCH_MISMATCH) {
+    return ANN_LATCH;
+  }
   return ANN_OVERRIDE;
 }
 

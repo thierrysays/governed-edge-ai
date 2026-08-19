@@ -38,7 +38,9 @@ from ipc.codec import (
 )
 
 _FIRMWARE = Path(__file__).resolve().parents[2] / "r4-supervisor"
-_SOURCES = ["test/parity_harness.cpp", "ipc_frame.cpp", "supervisor_state.cpp"]
+_SOURCES = [
+    "test/parity_harness.cpp", "ipc_frame.cpp", "supervisor_state.cpp", "latch.cpp",
+]
 
 pytestmark = pytest.mark.skipif(
     shutil.which("g++") is None, reason="no C++ compiler: firmware parity not checked"
@@ -393,3 +395,181 @@ class TestAgainstReferenceModel:
 def test_python_version_is_supported():
     """Guard against a toolchain that predates the syntax used here."""
     assert sys.version_info >= (3, 11)
+
+
+# ---------------------------------------------------------------------------
+# Latch relay: the C++ driver against the Python model
+# ---------------------------------------------------------------------------
+
+def latch_of(lines: list[str]) -> dict[str, str]:
+    """Parse the last LATCH line into a dict."""
+    for line in reversed(lines):
+        if line.startswith("LATCH "):
+            return dict(field.split("=", 1) for field in line.split()[1:])
+    raise AssertionError(f"no LATCH line in {lines}")
+
+
+class TestLatchParity:
+    """Both implementations, driven through the same scenarios.
+
+    The Python model in oversight/latch.py carries the tests; this checks the
+    C++ that will actually sit between the battery and the motors behaves
+    identically, including in the failure cases.
+    """
+
+    def _model(self):
+        from oversight.latch import LatchRelay, SimulatedLatch
+
+        sim = SimulatedLatch()
+        return LatchRelay(sim, poll_interval_ms=0.0), sim
+
+    def test_initial_reading_matches(self, harness):
+        from oversight.latch import LatchState
+
+        st = latch_of(run(harness, "LATCH_POLL"))
+        model, _ = self._model()
+        reading = model.poll()
+
+        assert st["commanded"] == "UNKNOWN" == reading.commanded.name
+        assert st["observed"] == LatchState.OPEN.name == reading.observed.name
+        assert st["agrees"] == "0"
+        assert reading.agrees is False
+
+    def test_enforce_and_permit_match(self, harness):
+        st = latch_of(run(harness, "LATCH_PERMIT", "LATCH_HALT"))
+        model, sim = self._model()
+        model.permit()
+        reading = model.enforce_halt()
+
+        assert st["commanded"] == reading.commanded.name == "OPEN"
+        assert st["observed"] == reading.observed.name == "OPEN"
+        assert st["agrees"] == "1"
+        assert reading.agrees is True
+        assert int(st["transitions"]) == model.transitions
+
+    def test_stuck_contact_matches(self, harness):
+        """The fault a single-source read-back would miss, in both."""
+        st = latch_of(run(harness, "LATCH_PERMIT", "LATCH_STICK 1", "LATCH_HALT"))
+        model, sim = self._model()
+        model.permit()
+        sim.inject_stuck_contact()
+        reading = model.enforce_halt()
+
+        assert st["reported"] == reading.reported.name == "OPEN"
+        assert st["observed"] == reading.observed.name == "CLOSED"
+        assert st["agrees"] == "0"
+        assert st["enforcing"] == "0"
+        assert reading.agrees is False
+        assert model.enforcing is False
+
+    def test_sense_failure_matches(self, harness):
+        st = latch_of(run(harness, "LATCH_HALT", "LATCH_SENSE 1", "LATCH_POLL"))
+        model, sim = self._model()
+        model.enforce_halt()
+        sim.inject_sense_failure()
+        reading = model.poll()
+
+        assert st["observed"] == reading.observed.name == "UNKNOWN"
+        assert st["enforcing"] == "0"
+        assert model.enforcing is False, "UNKNOWN must never read as isolated"
+
+    def test_bistability_matches(self, harness):
+        """The regression that caused the redesign, checked on both sides."""
+        st = latch_of(run(harness, "LATCH_HALT", "LATCH_POWERCYCLE", "LATCH_POLL"))
+        model, sim = self._model()
+        model.enforce_halt()
+        sim.power_cycle()
+        reading = model.poll()
+
+        assert st["observed"] == reading.observed.name == "OPEN"
+        assert st["agrees"] == "1"
+        assert reading.agrees is True
+
+    def test_idempotence_matches(self, harness):
+        st = latch_of(run(harness, "LATCH_HALT", "LATCH_HALT", "LATCH_HALT"))
+        model, _ = self._model()
+        for _ in range(3):
+            model.enforce_halt()
+        assert int(st["transitions"]) == model.transitions == 1
+        assert int(st["pulses_open"]) == 3   # pulses are sent, state changes once
+
+    def test_mismatch_counts_match(self, harness):
+        st = latch_of(run(
+            harness, "LATCH_PERMIT", "LATCH_STICK 1", "LATCH_HALT",
+            "LATCH_POLL", "LATCH_POLL",
+        ))
+        model, sim = self._model()
+        model.permit()
+        sim.inject_stuck_contact()
+        model.enforce_halt()
+        model.poll()
+        model.poll()
+        assert int(st["mismatches"]) == model.mismatches == 3
+
+    def test_recovery_matches(self, harness):
+        st = latch_of(run(
+            harness, "LATCH_PERMIT", "LATCH_STICK 1", "LATCH_HALT",
+            "LATCH_STICK 0", "LATCH_HALT",
+        ))
+        model, sim = self._model()
+        model.permit()
+        sim.inject_stuck_contact()
+        model.enforce_halt()
+        sim.release_stuck_contact()
+        reading = model.enforce_halt()
+        assert st["agrees"] == "1"
+        assert reading.agrees is True
+
+    def test_poll_cadence_is_honoured(self, harness):
+        lines = run(harness, "TICK 0", "LATCH_POLL", "LATCH_DUE", "LATCH_DUE")
+        assert lines.count("SKIPPED") == 2, "cadence must suppress repeat polls"
+
+    def test_poll_cadence_elapses(self, harness):
+        lines = run(harness, "TICK 0", "LATCH_POLL", "TICK 5000", "LATCH_DUE")
+        assert "POLLED" in lines
+
+    def test_constants_match_the_model(self):
+        from oversight.latch import POLL_INTERVAL_MS_DEFAULT, PULSE_MS_DEFAULT
+
+        header = (_FIRMWARE / "latch.h").read_text()
+        assert f"#define LATCH_PULSE_MS {int(PULSE_MS_DEFAULT)}u" in header
+        assert (
+            f"#define LATCH_POLL_INTERVAL_MS {int(POLL_INTERVAL_MS_DEFAULT)}u" in header
+        )
+
+    def test_i2c_address_matches_the_diagram(self):
+        header = (_FIRMWARE / "latch.h").read_text()
+        assert "#define LATCH_I2C_ADDR 0x2A" in header
+
+    def test_position_encoding_matches_the_codec(self):
+        """The C++ enum and the wire enum must agree, or a report decodes wrong."""
+        from ipc.codec import LatchPosition
+
+        header = (_FIRMWARE / "latch.h").read_text()
+        assert f"LATCH_OPEN = {int(LatchPosition.OPEN)}" in header
+        assert f"LATCH_CLOSED = {int(LatchPosition.CLOSED)}" in header
+        assert f"LATCH_UNKNOWN = {int(LatchPosition.UNKNOWN)}" in header
+
+    def test_latch_mismatch_reason_matches_the_codec(self):
+        from ipc.codec import OverrideReason
+
+        header = (_FIRMWARE / "ipc_frame.h").read_text()
+        assert (
+            f"#define OVR_LATCH_MISMATCH            0x{int(OverrideReason.LATCH_MISMATCH):02X}"
+            in header
+        )
+
+    def test_latch_annunciator_exists_in_both(self):
+        from oversight import mock_supervisor as model
+
+        header = (_FIRMWARE / "supervisor_state.h").read_text()
+        assert "ANN_LATCH" in header
+        assert model.ANNUNCIATOR_LATCH_FAULT == "LATCH"
+
+    def test_the_sketch_no_longer_drives_a_line_into_the_alvik(self):
+        """The design rule: governance modules do not attach to the governed
+        component. Guard against the wiring coming back."""
+        sketch = (_FIRMWARE / "r4_supervisor.ino").read_text()
+        assert "KILL_LINE_PIN" not in sketch
+        assert "LATCH_SENSE_PIN" in sketch
+        assert "latch_enforce_halt" in sketch

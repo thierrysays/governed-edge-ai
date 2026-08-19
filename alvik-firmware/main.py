@@ -11,12 +11,18 @@ Governance contract enforced on this MCU:
      exactly 0.70 is caught here even if Linux passed it.
   3. Unknown action types are rejected with REJ_UNKNOWN_ACTION.
   4. The kill-switch (KILL_PIN) halts all motion immediately and rejects
-     all subsequent commands until reset. From the four-board configuration
-     onward this pin is driven by D3 on the UNO R4 WiFi oversight node, not
-     only by a local button. That is the hard enforcement path: it holds
-     even if the VENTUNO Q ignores the oversight node's soft veto, because
-     no message on any link can reach this pin. A common ground between the
-     two boards is required for it to mean anything.
+     all subsequent commands until reset.
+
+     KILL_PIN is a local test input and **not** a governance control. It was
+     briefly driven by the oversight node, and that arrangement was wrong on
+     two counts: it put a governance module on the governed component, where
+     it worked only because this firmware chooses to read the pin, and it
+     failed open when the driving board lost power.
+
+     Physical enforcement now sits in a bistable latch relay in series with
+     the motor supply, owned by the oversight node. There is nothing for this
+     firmware to honour or ignore. These four gates remain as defence in
+     depth: they cost nothing and they fail in the safe direction.
 
 Serial interface:
   VENTUNO Q connects to the Alvik ESP32-S3 via USB-C. Commands arrive
@@ -45,8 +51,8 @@ from ipc_codec import (
 )
 from motor_map import MOTOR_MAP
 
-# Kill-switch input, active low. Driven by the UNO R4 WiFi oversight node
-# (its D3) and, optionally, by a local momentary button in parallel.
+# Local test input, active low. Not a governance control: see the module
+# docstring. Physical enforcement is the latch relay in the motor supply.
 KILL_PIN = 4
 
 _READ_CHUNK = 64

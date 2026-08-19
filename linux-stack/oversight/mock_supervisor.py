@@ -24,11 +24,16 @@ Two enforcement paths
 ---------------------
 1. Soft veto: OVERRIDE_ASSERT on the serial link. The GovernanceFilter stops
    transmitting CommandRequest frames.
-2. Hard line: a GPIO output driven into the Alvik kill-switch input, modelled
-   here by `kill_line_asserted`. It holds even if the VENTUNO Q ignores the
-   soft veto, because the Alvik firmware rejects every command while its
-   kill-switch pin reads active. The oversight node is the only board wired
-   to both paths.
+2. Physical: a bistable latch relay whose contact sits in series with the
+   Alvik's motor supply, driven over this node's own I2C bus. It holds even
+   if the VENTUNO Q ignores the soft veto, because there is no motor supply
+   to ignore it with, and it holds through a power cut and a Linux reboot
+   because the contact is bistable. See oversight/latch.py.
+
+   This replaces an earlier GPIO line into the Alvik's kill-switch pin, which
+   failed open on power loss and worked only because the Alvik's firmware
+   chose to read that pin. Both faults are gone: the relay needs no
+   cooperation from the governed board and no current to hold its position.
 
 Attestation limits
 ------------------
@@ -55,12 +60,16 @@ from ipc.codec import (
     AttestDigest,
     AttestVerdict,
     FrameParser,
+    LatchPosition,
+    LatchReport,
+    LatchRequest,
     OverrideAssert,
     OverrideClear,
     OverrideReason,
     SupervisorHeartbeat,
     encode,
 )
+from oversight.latch import LatchRelay, LatchState, SimulatedLatch
 
 HEARTBEAT_TIMEOUT_MS_DEFAULT: float = 2000.0
 DIGEST_CAPACITY_DEFAULT: int = 64
@@ -71,6 +80,7 @@ ANNUNCIATOR_WATCHING: str = "WATCHING"       # steady outline
 ANNUNCIATOR_OVERRIDE: str = "OVERRIDE"       # solid block, latched
 ANNUNCIATOR_STALE: str = "STALE"             # governance heartbeat lost
 ANNUNCIATOR_ATTEST_ALERT: str = "ATTEST"     # chain gap or rollback seen
+ANNUNCIATOR_LATCH_FAULT: str = "LATCH"       # the relay is not where it was told
 
 
 @dataclass
@@ -80,6 +90,9 @@ class SupervisorStats:
     overrides_asserted: int = 0
     overrides_cleared: int = 0
     chain_faults: int = 0
+    latch_requests: int = 0
+    latch_requests_refused: int = 0
+    latch_mismatches: int = 0
 
 
 class MockR4Supervisor:
@@ -93,15 +106,20 @@ class MockR4Supervisor:
     digest_capacity:
         How many (audit_ref, digest) pairs the node retains. Models the R4's
         limited EEPROM: a ring buffer, oldest evicted first.
+    latch:
+        The latch relay this node owns. None builds one over a SimulatedLatch,
+        which is what a complete simulated node has.
     """
 
     def __init__(
         self,
         heartbeat_timeout_ms: float = HEARTBEAT_TIMEOUT_MS_DEFAULT,
         digest_capacity: int = DIGEST_CAPACITY_DEFAULT,
+        latch: LatchRelay | None = None,
     ) -> None:
         self._timeout_s = heartbeat_timeout_ms / 1000.0
         self._capacity = digest_capacity
+        self._latch = latch if latch is not None else LatchRelay(SimulatedLatch())
 
         self._master_fd, self._slave_fd = os.openpty()
         tty.setraw(self._slave_fd)
@@ -147,14 +165,28 @@ class MockR4Supervisor:
             return self._override_reason
 
     @property
-    def kill_line_asserted(self) -> bool:
-        """State of the GPIO line wired into the Alvik kill-switch input.
+    def latch(self) -> LatchRelay:
+        """The relay this node owns. Nothing else in the system can reach it."""
+        return self._latch
 
-        Asserted while an override is latched, and also before the first
-        heartbeat has ever arrived. The board comes up holding the line: a
-        governance tier that has not yet said anything has not yet earned the
-        authority to move a robot. The line releases on first contact, with no
-        latch and no arming step, and re-asserts on any override.
+    @property
+    def motor_power_cut(self) -> bool:
+        """True when the contact is **observed** open: the motors are isolated.
+
+        Read from the sense line, not from what was commanded. False before
+        the first poll and false while the sense line is unreadable, because
+        neither is evidence that the motors are isolated. That asymmetry is
+        deliberate: this property is only ever allowed to claim safety it has
+        seen.
+        """
+        return self._latch.enforcing
+
+    @property
+    def halt_intended(self) -> bool:
+        """True when the node wants the motors isolated, whatever the relay did.
+
+        Differs from `motor_power_cut` exactly when something is wrong, which
+        is the pair worth watching: intent without effect is a failed relay.
         """
         with self._lock:
             return self._override or self._last_heartbeat is None
@@ -168,6 +200,8 @@ class MockR4Supervisor:
                     return ANNUNCIATOR_STALE
                 if self._override_reason == OverrideReason.ATTESTATION_MISMATCH:
                     return ANNUNCIATOR_ATTEST_ALERT
+                if self._override_reason == OverrideReason.LATCH_MISMATCH:
+                    return ANNUNCIATOR_LATCH_FAULT
                 return ANNUNCIATOR_OVERRIDE
             return ANNUNCIATOR_WATCHING
 
@@ -240,10 +274,16 @@ class MockR4Supervisor:
             self._chain_alert = False
             self._stats.overrides_cleared += 1
             frame = encode(OverrideClear(timestamp_us=self._timestamp_us()))
+        self._latch.permit()
         self._write(frame)
+        self._write(self._latch_report_frame())
         return True
 
     def start(self) -> MockR4Supervisor:
+        # Isolate the motors before doing anything else. The contact is
+        # bistable, so it comes up wherever it was left, and the node must
+        # not assume that is where it wants it.
+        self._latch.enforce_halt()
         self._running = True
         self._last_heartbeat_at = time.monotonic()
         self._thread = threading.Thread(
@@ -279,6 +319,7 @@ class MockR4Supervisor:
                 ready, _, _ = select.select([self._master_fd], [], [], 0.05)
             except (ValueError, OSError):
                 break
+            self._poll_latch()
             if not ready:
                 continue
             try:
@@ -294,17 +335,86 @@ class MockR4Supervisor:
             self._on_heartbeat(msg)
         elif isinstance(msg, AttestDigest):
             self._on_digest(msg)
+        elif isinstance(msg, LatchRequest):
+            self._on_latch_request(msg)
+
+    # ------------------------------------------------------------------
+    # Latch
+    # ------------------------------------------------------------------
+
+    def _poll_latch(self) -> None:
+        """Read the contact back at the configured cadence.
+
+        Polling rather than waiting for a transition is what catches a relay
+        that silently failed to move: an edge that never happened raises no
+        interrupt. A disagreement between what was commanded, what the module
+        reports and what the sense line observes latches an override, because
+        a safety contact that is not where it was told to be is a fault
+        whatever direction it is in.
+        """
+        reading = self._latch.poll_if_due()
+        if reading is None:
+            return
+        if reading.commanded is LatchState.UNKNOWN:
+            return
+        if reading.agrees:
+            return
+        with self._lock:
+            self._stats.latch_mismatches += 1
+        self._write(self._latch_report_frame())
+        self._assert_override(OverrideReason.LATCH_MISMATCH)
+
+    def _latch_report_frame(self) -> bytes:
+        reading = self._latch.last_reading
+        if reading is None:
+            reading = self._latch.poll()
+        return encode(LatchReport(
+            commanded=LatchPosition(int(reading.commanded)),
+            reported=LatchPosition(int(reading.reported)),
+            observed=LatchPosition(int(reading.observed)),
+            transitions=self._latch.transitions,
+            mismatches=self._latch.mismatches,
+        ))
 
     # ------------------------------------------------------------------
     # Message handlers
     # ------------------------------------------------------------------
 
     def _on_heartbeat(self, hb: SupervisorHeartbeat) -> None:
+        first: bool
         with self._lock:
+            first = self._last_heartbeat is None
             self._stats.heartbeats_received += 1
             self._last_heartbeat = hb
             self._last_heartbeat_at = time.monotonic()
+            override = self._override
         self._arm_watchdog()
+        # The node boots with the contact open and releases it on first
+        # contact with a live governance tier. No latch, no arming step: a
+        # tier that has said nothing has not earned the authority to move a
+        # robot. An override already latched keeps the contact open.
+        if first and not override:
+            self._latch.permit()
+            self._write(self._latch_report_frame())
+
+    def _on_latch_request(self, req: LatchRequest) -> None:
+        """A request from the governance tier. The arbiter decides.
+
+        A request to close while an override is latched is refused. That
+        refusal is the reason the relay is owned by this board and not by the
+        one asking.
+        """
+        with self._lock:
+            self._stats.latch_requests += 1
+            refused = self._override and req.desired is LatchPosition.CLOSED
+            if refused:
+                self._stats.latch_requests_refused += 1
+        if not refused:
+            if req.desired is LatchPosition.OPEN:
+                self._latch.enforce_halt()
+            else:
+                self._latch.permit()
+        self._write(self._latch_report_frame())
 
     def _on_digest(self, msg: AttestDigest) -> None:
         verdict: AttestVerdict
@@ -349,7 +459,11 @@ class MockR4Supervisor:
                     timestamp_us=self._timestamp_us(), reason=reason,
                 ))
         if frame:
+            # Open the contact before announcing it. If the announcement is
+            # the thing that fails, the motors are already isolated.
+            self._latch.enforce_halt()
             self._write(frame)
+            self._write(self._latch_report_frame())
 
     def _heartbeat_stale_locked(self) -> bool:
         return (time.monotonic() - self._last_heartbeat_at) > self._timeout_s
