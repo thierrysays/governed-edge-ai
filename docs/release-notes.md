@@ -7,6 +7,236 @@ edited to pretend otherwise.
 
 ---
 
+## v3.0.0: the latch relay
+
+**Tag:** `v3.0.0` · Tagger: Thierry Sayegh-Sauvage
+
+Physical enforcement moves off the governed board. Where v2.0.0 ran a GPIO line
+from the oversight node into the Alvik's kill-switch pin, v3.0.0 puts a bistable
+relay contact in the Alvik's motor supply, held on the oversight node's own I2C
+bus. The robot no longer participates in its own restraint, and the stop no
+longer depends on any board staying powered.
+
+### Why the line had to go
+
+Two faults, and the second is worse than the first.
+
+**It failed open.** Cut power to the oversight node and the line released, so a
+power failure at the supervisor un-isolated the motors. A safety control that
+stops enforcing when its own board dies is not a safety control.
+
+What made this uncomfortable is that v2.0.0 shipped with 611 passing tests and
+none of them could have caught it. The mocks modelled a state machine, so there
+was no power to lose. **Coverage does not find a fault whose failure mode the
+model has no vocabulary for.** `SimulatedLatch` now models a contact rather
+than a boolean, and `TestBistability` is the test that could not previously
+have existed.
+
+**It needed the governed component's cooperation.** The line worked only
+because `alvik-firmware/main.py` chose to read that pin. Firmware on the board
+under review is a software gate wearing a hardware costume: reflash the Alvik
+and the control evaporates. That broke the project's own design rule, which
+says a governance module does not attach to the component it governs, while the
+documentation described the line as the path that could not be reached from
+software.
+
+A bistable contact in the motor supply has neither fault. It holds position
+with no coil current, so it survives a power cut at every board in the rig and
+a reboot of the decision host, and it is in the supply, so the Alvik has
+nothing left to agree to. The `KILL_PIN` on the Alvik remains as a local test
+input for firmware work and is documented as **not** a governance control.
+
+### Four invariants, one of which now holds with everything switched off
+
+| | Invariant | Enforced by |
+|---|---|---|
+| A | Log before act | The MCU rejects any `CommandRequest` with `audit_ref == 0` |
+| B | Enforcement outlives its enforcer | The latch contact, which holds with no current at all |
+| C | Witness before act | Chain digests retained on a board the host does not control |
+| D | Oversight is not revocable by its subject | No inbound message releases the latch |
+
+B is new in this release, and it is the only one of the four that holds with
+every processor in the system switched off.
+
+### Who owns the relay
+
+The arbiter, exclusively, and the asymmetry is the point. The governance tier
+may send `LATCH_REQUEST(OPEN)`, which is **always honoured**, because more ways
+to stop are safe. It may send `LATCH_REQUEST(CLOSED)`, which is **refused
+outright** while an override stands. Nothing on any link can talk the override
+down, which is why the relay sits on the arbiter's bus and not the decision
+host's.
+
+The contact is opened before anything else runs at boot. Bistable means it
+comes up wherever it was left rather than in a safe default, so the arbiter
+starts from `UNKNOWN` and finds out instead of assuming. The first heartbeat is
+what closes it: a governance tier that has not yet said anything has not yet
+earned the authority to move a robot.
+
+### Reading the contact back, and why it takes two channels
+
+A command whose effect is never checked is an assertion. The arbiter reads three
+things every 100 ms: what it last commanded, what the module's own MCU reports
+over I2C, and what a sense circuit observes.
+
+The register is a cross-check, never the observation. A small MCU behind an I2C
+interface most likely echoes the last command it accepted rather than observing
+where the contact sits, and believing it would reproduce the exact error the
+read-back exists to remove: the component that was told to stop reporting that
+it stopped.
+
+**The sense circuit is two channels, and that came out of writing the
+deployment guide rather than out of the tests.** The first implementation read
+one pin, high meaning open. Part 6 of the guide forced the question of what
+that pin reads when its wire is cut, and the answer was "open", which the
+arbiter would have reported as *the motors are isolated*. On no evidence at
+all. Wiring it the other way round only moves the problem: whichever way a
+single input is arranged, one of its two readings is also what a broken wire
+produces, so one contact position becomes indistinguishable from a fault.
+
+The observation is now antivalent, which is old safety-engineering practice:
+two opto-isolated channels that must disagree with each other.
+
+| A, "contact open" | B, "motor rail live" | Decoded |
+|---|---|---|
+| Lit | Dark | `OPEN` |
+| Dark | Lit | `CLOSED` |
+| Dark | Dark | `UNKNOWN`: cut harness, dead opto, flat battery |
+| Lit | Lit | `UNKNOWN`: shorted harness |
+
+Every fault in the observation lands in `UNKNOWN`, and nothing rounds `UNKNOWN`
+up to isolation. The cost is availability: a broken sense wire stops the rig.
+That is the correct direction for this trade. Opto isolation also removes the
+shared ground the old GPIO line depended on, which was the one failure that
+design admitted it could not detect for itself.
+
+One residual property is documented rather than hidden: only the energised
+channel is under test at any instant, so a break in the dark one is latent until
+the contact next moves. It surfaces on the next transition, because every
+command reads back.
+
+### Five boards, one job each
+
+`docs/architecture-reconciliation.md` reads the published governance-chain
+diagram against the codebase: a fifteen-row delta register, eight decisions
+taken, four reasoned defaults.
+
+| Board | Single job | Decides? | Enforces? |
+|---|---|---|---|
+| UNO Q 4GB | Witness: an independent second observation | no | no |
+| VENTUNO Q | Decision: perception, governance filter, audit journal | yes | no |
+| Alvik | Governed body: executes, and may refuse | no | self only |
+| UNO R4 WiFi | Safety arbiter: relay, buttons, annunciator, digest witness | no | **yes** |
+| Nesso N1 | Out-of-band human supervision | no | via signed lift |
+
+**No board both decides and enforces.** That sentence is the architecture, and
+it is checkable by looking at the wiring rather than by reading a policy.
+
+The Modulino Hub, Buttons, Pixels and Buzzer are dropped as redundant with the
+arbiter, which already has buttons, a matrix and a Qwiic port. Distance and
+Movement stay: they are the two doing real work, a safety envelope outside the
+vision pipeline and proof of stop. Both attach to the arbiter's bus, not the
+decision host's, because a governance module should not hang off the board that
+decides any more than off the board that is governed.
+
+**The Nesso N1 is in the architecture and has no firmware.** It is build step
+13. Nothing in this release depends on it, and the documentation says so
+wherever it appears.
+
+### Cameras, and three specifications with governance consequences
+
+Settled: Arducam IMX219 8 MP, two of them, splayed for roughly 120°. That
+retires the longest-running open item in the project. Three of its
+specifications went into the threat model rather than the parts list:
+
+- **200 mm minimum focus** leaves the near field blurred exactly where the risk
+  is highest, which is what moves the ToF module from nice-to-have to covering
+  a known hole in the primary sensor.
+- **Rolling shutter** means a frame is not a moment, which is a real error term
+  in any claim about where something was when the system decided to stop.
+- **62.2° per camera** means the audit log will faithfully record that nothing
+  was detected in a blind sector.
+
+### Protocol
+
+`docs/ipc-protocol.md` v0.3. Two new message types on the oversight link,
+fifteen in total:
+
+| Type | Code | Direction | Payload |
+|---|---|---|---|
+| `LATCH_REQUEST` | `0x32` | Governance to arbiter | 9 bytes |
+| `LATCH_REPORT` | `0xA3` | Arbiter to governance | 11 bytes |
+
+Plus `RejectReason.LATCH_OPEN = 0x0B`, `OverrideReason.LATCH_MISMATCH = 0x05`,
+and a fifth annunciator glyph, `LATCH`, for a relay that is not where it was
+told to be or cannot be seen.
+
+Additive on the wire. The thirteen existing message types are unchanged.
+
+### Breaking changes
+
+**Wiring.** The jumper from the oversight node's D3 into the Alvik's D4 must be
+removed. D3 is now an input, D5 is new, and both are pulled up. The relay goes
+on the Qwiic bus at `0x2A` with two opto-isolated sense channels.
+`docs/deployment-guide.md` Part 6 has the build in full, including the two
+verification tests that prove the sense circuit is not decorative.
+
+**API.** `MockR4Supervisor.kill_line_asserted` is removed and replaced by two
+properties that were previously conflated:
+
+| Property | Means |
+|---|---|
+| `motor_power_cut` | The contact has been **observed** open. Never true on an `UNKNOWN` reading. |
+| `halt_intended` | The arbiter has **decided** to stop the rig. |
+
+They differ exactly when something is wrong, and collapsing them was how a
+system could claim an isolation it had not seen. `SupervisorLink` gains
+`last_latch`, `motors_isolated` and `request_latch()`.
+
+**Simulator.** `SimulatedLatch.inject_sense_failure()` now takes a channel,
+`"a"`, `"b"` or `"both"`, defaulting to `"both"`.
+
+No schema change. A v2.0.0 audit database is read without modification.
+
+### QA
+
+703 tests across two modules, 100% line coverage on both, gate at 98. ruff,
+mypy strict, bandit and pip-audit clean.
+
+The parity harness now compiles `latch.cpp` alongside the state machine with
+`-Wall -Wextra -Werror`. The sense glue is `digitalRead`, which the harness
+cannot drive, so it is checked as text instead: both pins present, both pulled
+up, and `LATCH_UNKNOWN` still reachable from the glue.
+
+### Not tested
+
+The Arduino hardware layer, and this release adds to that list rather than
+shortening it. Pin timing, the LED matrix driver, Wi-Fi, serial throughput at
+921600 baud, contact bounce, coil pulse adequacy, inrush on the motor supply,
+opto forward current at the Alvik's cell voltage, and the switching thresholds
+of both sense channels. Every timing figure in the protocol specification is a
+design target, not a measurement.
+
+Three assumptions are cheap to settle on a bench and each changes only its own
+paragraph if wrong: that the relay module's register echoes its command, that
+its I2C address is `0x2A`, and that a 50 ms coil pulse is right.
+
+### What comes next
+
+| Step | Work |
+|---|---|
+| 12 | Arbiter as governance bus owner: I2C layer, third button, ALLOW / GATED / HALT glyphs |
+| 13 | Nesso N1: verdict stream, display, signed HALT lift, key pairing |
+| 14 | Audit journal signing, countersigned by the Nesso |
+| 15 | Distance and Movement: evidence outside the vision pipeline, proof of stop |
+| 16 | Witness UNO Q and the agreement gate |
+| 17 | STM32H5 Zephyr firmware, motor-side timing only. Blocked on an unpublished pinout. |
+
+The arbiter role stays on the UNO R4 WiFi permanently, which is what takes step
+17 off the critical path for everything above it.
+
+---
+
 ## v2.0.0: the oversight tier
 
 **Tag:** `v2.0.0` at `d2838a4` · Tagger: Thierry Sayegh-Sauvage
@@ -164,7 +394,7 @@ reached from software.
 
 The replacement is a bistable relay contact in the Alvik's motor supply, held
 on the oversight board's own I2C bus. It holds position with no current at all,
-and the governed board has nothing left to agree to. See the current `main`,
+and the governed board has nothing left to agree to. See **v3.0.0**,
 `docs/architecture.md` v3.0, and `docs/architecture-reconciliation.md` for the
 reasoning in full.
 
