@@ -20,6 +20,8 @@ from ipc.codec import (
     AttestDigest,
     AttestVerdict,
     FrameParser,
+    LatchPosition,
+    LatchReport,
     OverrideAssert,
     OverrideClear,
     OverrideReason,
@@ -92,13 +94,13 @@ class TestLifecycle:
     def test_kill_line_held_before_the_first_heartbeat(self, node):
         """The board comes up holding the line: a governance tier that has
         said nothing has not earned the authority to move a robot."""
-        assert node.kill_line_asserted is True
+        assert node.motor_power_cut is True
         assert node.override_active is False
 
     def test_kill_line_releases_on_first_contact(self, node, channel):
         channel.write(_heartbeat())
         time.sleep(SETTLE_S)
-        assert node.kill_line_asserted is False
+        assert node.motor_power_cut is False
 
     def test_context_manager_stops_cleanly(self):
         with MockR4Supervisor(heartbeat_timeout_ms=10_000.0) as n:
@@ -126,9 +128,22 @@ class TestHeartbeat:
         assert hb.commands_sent == 3
         assert node.stats.heartbeats_received == 1
 
-    def test_heartbeat_draws_no_response(self, node, channel):
-        """The oversight node reports nothing back on a healthy heartbeat.
+    def test_first_heartbeat_releases_the_latch_and_says_so(self, node, channel):
+        """The node boots with the motors isolated and releases on first
+        contact with a live governance tier. It reports the release rather
+        than leaving the tier to assume it."""
+        channel.write(_heartbeat())
+        msgs = _read_messages(channel, timeout_s=0.3)
+        reports = [m for m in msgs if isinstance(m, LatchReport)]
+        assert reports, "the release should be reported, not silent"
+        assert reports[-1].observed is LatchPosition.CLOSED
+        assert not any(isinstance(m, OverrideAssert) for m in msgs)
+
+    def test_later_heartbeats_draw_no_response(self, node, channel):
+        """Once the latch has been released, a healthy heartbeat is silent.
         Silence on this link means the veto is not raised."""
+        channel.write(_heartbeat())
+        _read_messages(channel, timeout_s=0.3)
         channel.write(_heartbeat())
         assert _read_messages(channel, timeout_s=0.2) == []
 
@@ -152,7 +167,7 @@ class TestWatchdog:
                 assert node.override_active
                 assert node.override_reason is OverrideReason.GOVERNANCE_HEARTBEAT_LOST
                 assert node.annunciator == ANNUNCIATOR_STALE
-                assert node.kill_line_asserted
+                assert node.motor_power_cut
             finally:
                 ch.close()
 
@@ -195,6 +210,7 @@ class TestWatchdog:
 
 class TestButton:
     def test_press_latches_and_transmits(self, node, channel):
+        _read_messages(channel, timeout_s=0.05)   # drain the boot report
         node.press_button()
         msgs = _read_messages(channel, timeout_s=0.3)
         assert node.override_active
@@ -208,13 +224,13 @@ class TestButton:
 
     def test_press_asserts_the_kill_line(self, node):
         node.press_button()
-        assert node.kill_line_asserted
+        assert node.motor_power_cut
 
     def test_release_does_not_clear_the_latch(self, node):
         node.press_button()
         node.release_button()
         assert node.override_active
-        assert node.kill_line_asserted
+        assert node.motor_power_cut
 
     def test_repeated_press_asserts_once(self, node):
         node.press_button()
@@ -281,7 +297,7 @@ class TestClear:
         node.press_button()
         node.release_button()
         node.clear_override()
-        assert node.kill_line_asserted is False
+        assert node.motor_power_cut is False
 
 
 # ---------------------------------------------------------------------------

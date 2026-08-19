@@ -4,6 +4,58 @@ Running record of decisions, discoveries, and blockers for the Glossolalie Advis
 
 ---
 
+## 2026-08-19: Step 11: The latch relay replaces the GPIO kill line
+
+**What was built.**
+
+`linux-stack/oversight/latch.py` and its C++ port `r4-supervisor/latch.h/.cpp`, two new IPC message types (`LATCH_REQUEST 0x32`, `LATCH_REPORT 0xA3`), a new reject reason and a new override reason, a fifth annunciator glyph, and 60 new tests. The GPIO line from the R4 into the Alvik's kill-switch pin is gone.
+
+**Why the line had to go, and it was not the obvious reason.**
+
+Two faults, and the second is worse than the first.
+
+It **failed open**. Cut power to the R4 and the line released, so a power cut at the oversight node un-isolated the motors. A safety control that stops enforcing when its own board dies is not a safety control. What made this genuinely uncomfortable is that the test suite had 611 tests and none of them could have caught it: the mocks modelled a state machine, so there was no power to lose. Coverage does not find a fault whose failure mode the model has no vocabulary for. `SimulatedLatch` now models a contact rather than a boolean, and `power_cycle()` is the missing test.
+
+It **needed the governed component's cooperation**. The line worked only because `alvik-firmware/main.py` chose to read that pin. That is a governance module hanging off the governed component: firmware on the board under review, which is a software gate wearing a hardware costume. Reflash the Alvik and the control evaporates. This broke the project's own design rule, and it had been sitting in the architecture since step 9 while the documentation described it as the path that could not be reached from software.
+
+A bistable contact in the motor supply has neither fault. It holds position with no coil current, and there is nothing for the Alvik to agree to.
+
+**Why the read-back is two sources rather than one.**
+
+The module puts a small MCU behind an I2C interface, so a state register on it most likely echoes the last command it accepted rather than observing where the contact sits. Believing it would reproduce exactly the error the read-back exists to remove: the component that was told to stop reporting that it stopped, which is the same shape as trusting `stm32_ack` on its own. So the register is a cross-check and a sense circuit on the contact is the source of truth, and a disagreement between them is more informative than either agreeing with itself.
+
+**Why the sense circuit is two channels, which came out of writing the deployment guide.**
+
+The first implementation read one pin: high meant open. Writing Part 6 of the deployment guide forced the question of what that pin reads when its wire is cut, and the answer was "open", which the arbiter would report as *the motors are isolated*. It is the one claim this board must never make on no evidence, and it was the default failure mode.
+
+Wiring it the other way round only moves the problem: whichever way a single input is arranged, one of its two readings is also what a broken wire produces, so one contact position becomes indistinguishable from a fault. The fix is antivalent sensing, which is old safety-engineering practice: two channels that must disagree with each other, one energised only while the contact is open and the other only while the motor rail is live. Any non-complementary pair is UNKNOWN, and the three-valued model already refused to round UNKNOWN up to isolation. A cut harness, a dead opto or a flat battery all land in UNKNOWN now.
+
+One property is worth stating rather than hiding: only the energised channel is under test at any instant, so a break in the dark one is latent until the contact next moves. That is one of the reasons every command reads back and the pair is polled at a fixed cadence rather than waiting for an edge.
+
+**Boot behaviour.** The contact is opened before anything else runs, because bistable means it comes up wherever it was left rather than in a safe default. The arbiter starts from UNKNOWN and finds out, and the first heartbeat is what closes it.
+
+**Who owns the relay.** The arbiter, exclusively. The governance tier may request OPEN, which is always honoured because more ways to stop are safe. It may request CLOSED, which is refused outright while an override stands. That asymmetry is the whole reason the relay is not on the decision host's bus.
+
+**QA results.** 703 tests total, 100% line coverage on both modules. ruff clean, mypy strict clean, bandit clean, pip-audit clean. The parity harness compiles `latch.cpp` alongside the state machine with `-Wall -Wextra -Werror`. The sense glue is `digitalRead`, which the harness cannot drive, so it is checked as text: both pins present, both pulled up, and `LATCH_UNKNOWN` still reachable from the glue.
+
+---
+
+## 2026-08-19: Step 10: Architecture reconciliation, and a fifth board
+
+**What was built.**
+
+`docs/architecture-reconciliation.md`: the published governance-chain diagram read against the codebase, a fifteen-row delta register, eight decisions taken and four reasoned defaults.
+
+**The configuration that came out of it.** Five boards, one job each: UNO Q as an independent witness, VENTUNO Q as the decision path, Alvik as the governed body, UNO R4 WiFi as the safety arbiter, Nesso N1 as the out-of-band console. The Modulino Hub, Buttons, Pixels and Buzzer were dropped as redundant with the R4, which already has buttons, a matrix and a Qwiic port. Distance and Movement stay, because they are the two doing real work: a safety envelope outside the vision pipeline, and proof of stop.
+
+**The decision that unblocked the most.** The governance modules attach to the R4's Qwiic bus, not the VENTUNO Q's. The design rule that produced the third line in the first place says a governance module must not hang off the thing it governs; the same rule says it must not hang off the thing that decides either. The R4 neither decides nor is governed, which makes it the only board in the rig that qualifies. A side effect is that the R4 becomes the safety arbiter permanently, which takes the unpublished VENTUNO Q pinout off the critical path for steps 11 to 15.
+
+**The camera closed.** Arducam IMX219 8 MP, two of them via Kubii, splayed for roughly 120°. That retires the longest-running open item in the project. Three of its specifications have governance consequences rather than image-quality ones: 200 mm minimum focus leaves the near field blurred exactly where the risk is highest, which is what moves the ToF module from nice-to-have to covering a known hole in the primary sensor; rolling shutter means a frame is not a moment, which is a real error term in any claim about where something was when the system decided to stop; and 62.2° per camera means the audit log will faithfully record that nothing was detected in a blind sector. All three are now in the threat model rather than waiting to be discovered.
+
+**What was left undecided on purpose.** The Movement module needs a reader that is not the Alvik, or proof of stop collapses into self-reporting by the board being stopped. Wireless telemetry was chosen and the remaining cost written down rather than papered over.
+
+---
+
 ## 2026-08-19: Step 9: Oversight tier (Arduino UNO R4 WiFi)
 
 **What was built.**

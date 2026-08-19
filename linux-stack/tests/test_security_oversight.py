@@ -86,7 +86,7 @@ class TestGovernanceHostCannotSilenceItsSupervisor:
         time.sleep(0.3)
 
         assert node.override_active is True
-        assert node.kill_line_asserted is True
+        assert node.motor_power_cut is True
 
     def test_flooding_heartbeats_does_not_clear_an_override(self, node, channel):
         node.press_button()
@@ -134,7 +134,7 @@ class TestSerialLinkTrustBoundary:
         node.release_button()
         channel.write(encode(OverrideClear(timestamp_us=1)))
         time.sleep(SETTLE_S)
-        assert node.kill_line_asserted is True
+        assert node.motor_power_cut is True
 
     def test_the_alvik_still_refuses_while_the_line_is_held(self, tmp_path):
         """End to end: with the kill line asserted, the actuation MCU rejects
@@ -363,3 +363,132 @@ class TestHostileInput:
             "command_sent": False,
         })
         assert honest.canonical() != forged.canonical()
+
+
+# ---------------------------------------------------------------------------
+# T5: the latch relay, now the only physical enforcement point
+# ---------------------------------------------------------------------------
+
+class TestLatchCannotBeTalkedOpen:
+    """The relay replaced a GPIO line into the Alvik. That line could be
+    defeated by reflashing the governed board, because it only worked if the
+    Alvik chose to read the pin. These tests check the replacement cannot be
+    defeated from the wire either.
+    """
+
+    @pytest.fixture
+    def rig(self):
+        from oversight.latch import LatchRelay, SimulatedLatch
+        from oversight.mock_supervisor import MockR4Supervisor
+
+        sim = SimulatedLatch()
+        node = MockR4Supervisor(
+            heartbeat_timeout_ms=10_000.0,
+            latch=LatchRelay(sim, poll_interval_ms=0.0),
+        ).start()
+        channel = open(node.device, "rb+", buffering=0)
+        try:
+            yield node, channel, sim
+        finally:
+            channel.close()
+            node.stop()
+
+    def _release(self, node, channel):
+        channel.write(encode(SupervisorHeartbeat(1, SystemState.ARMED, 1, 0)))
+        time.sleep(SETTLE_S)
+
+    def test_no_message_closes_the_contact_while_latched(self, rig):
+        """The whole outbound vocabulary, thrown at a latched node."""
+        from ipc.codec import LatchPosition, LatchReport, LatchRequest
+        from oversight.latch import LatchState
+
+        node, channel, sim = rig
+        self._release(node, channel)
+        node.press_button()
+        node.release_button()
+        time.sleep(SETTLE_S)
+        assert sim.contact is LatchState.OPEN
+
+        for frame in (
+            encode(LatchRequest(audit_ref=1, desired=LatchPosition.CLOSED)),
+            encode(SupervisorHeartbeat(9, SystemState.ARMED, 9, 9)),
+            encode(AttestDigest(1, b"\x01" * 32)),
+            encode(OverrideClear(timestamp_us=1)),
+            encode(LatchReport(
+                LatchPosition.CLOSED, LatchPosition.CLOSED,
+                LatchPosition.CLOSED, 0, 0,
+            )),
+        ):
+            channel.write(frame)
+        time.sleep(0.4)
+
+        assert sim.contact is LatchState.OPEN
+        assert node.override_active is True
+
+    def test_flooding_close_requests_does_not_open_it(self, rig):
+        from ipc.codec import LatchPosition, LatchRequest
+        from oversight.latch import LatchState
+
+        node, channel, sim = rig
+        self._release(node, channel)
+        node.press_button()
+        time.sleep(SETTLE_S)
+        for _ in range(200):
+            channel.write(encode(LatchRequest(1, LatchPosition.CLOSED)))
+        time.sleep(0.4)
+        assert sim.contact is LatchState.OPEN
+        assert node.stats.latch_requests_refused >= 1
+
+    def test_a_forged_latch_report_does_not_move_the_contact(self, rig):
+        """The report is an output, not an input. Echoing one back tells the
+        node nothing about its own relay."""
+        from ipc.codec import LatchPosition, LatchReport
+        from oversight.latch import LatchState
+
+        node, channel, sim = rig
+        self._release(node, channel)
+        node.press_button()
+        time.sleep(SETTLE_S)
+        channel.write(encode(LatchReport(
+            LatchPosition.CLOSED, LatchPosition.CLOSED, LatchPosition.CLOSED, 99, 0,
+        )))
+        time.sleep(SETTLE_S)
+        assert sim.contact is LatchState.OPEN
+
+    def test_a_lying_module_cannot_hide_an_open_contact(self, rig):
+        """The inverse fault: the module claims CLOSED while the contact is
+        open. Still a mismatch, still an override. The design does not assume
+        which source is the honest one."""
+        from oversight.latch import LatchState
+
+        node, channel, sim = rig
+        self._release(node, channel)
+        sim._register = LatchState.OPEN   # noqa: SLF001 - module disagrees
+        time.sleep(0.4)
+        assert node.stats.latch_mismatches >= 1
+
+    def test_a_reflashed_alvik_cannot_restore_motor_power(self, rig):
+        """The fault that killed the GPIO design. The contact is in the supply,
+        so there is no pin for the governed board to stop honouring."""
+        from oversight.latch import LatchState
+
+        node, channel, sim = rig
+        self._release(node, channel)
+        node.press_button()
+        time.sleep(SETTLE_S)
+        # Nothing the Alvik runs is represented here, and that is the point:
+        # it has no interface to this contact at all.
+        assert sim.contact is LatchState.OPEN
+        assert node.motor_power_cut is True
+
+    def test_cutting_power_to_the_arbiter_leaves_the_motors_isolated(self, rig):
+        """The regression. The GPIO line released when its board lost power."""
+        from oversight.latch import LatchState
+
+        node, channel, sim = rig
+        self._release(node, channel)
+        node.press_button()
+        time.sleep(SETTLE_S)
+        node.stop()                # the oversight node goes away entirely
+        sim.power_cycle()
+        assert sim.contact is LatchState.OPEN

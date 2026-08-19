@@ -1,7 +1,7 @@
 """
 Smoke tests for the oversight tier (Arduino UNO R4 WiFi).
 
-Fast, hardware-free sanity: if these fail, the four-board governance path is
+Fast, hardware-free sanity: if these fail, the end-to-end governance path is
 broken and nothing downstream is worth running.
 """
 
@@ -91,7 +91,7 @@ def test_override_button_stops_actuation(rig):
 
     row = _rows(db)[0]
     assert row["command_sent"] == 0
-    assert node.kill_line_asserted is True
+    assert node.motor_power_cut is True
 
 
 def test_audit_chain_reconciles_against_the_witness(rig):

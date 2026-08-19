@@ -1,8 +1,8 @@
 # Deployment Guide
 
-**From bare metal to a running four-board demonstrator.**
+**From bare metal to a running demonstrator.**
 
-Version 1.0, 2026-08-19
+Version 2.0, 2026-08-19
 
 This guide assumes nothing. If you have never flashed a microcontroller, never
 used a serial port and have only ever met Python through a tutorial, you are
@@ -22,7 +22,7 @@ Read Part 0 before buying or wiring anything.
 - [Part 3: Prepare your workstation](#part-3-prepare-your-workstation)
 - [Part 4: Flash the Alvik](#part-4-flash-the-alvik)
 - [Part 5: Flash the UNO R4 WiFi oversight node](#part-5-flash-the-uno-r4-wifi-oversight-node)
-- [Part 6: Wire the kill line](#part-6-wire-the-kill-line)
+- [Part 6: Wire the latch relay](#part-6-wire-the-latch-relay)
 - [Part 7: Set up the VENTUNO Q governance node](#part-7-set-up-the-ventuno-q-governance-node)
 - [Part 8: Set up the UNO Q perception node](#part-8-set-up-the-uno-q-perception-node)
 - [Part 9: First full run](#part-9-first-full-run)
@@ -38,22 +38,48 @@ Read Part 0 before buying or wiring anything.
 
 ### The system in one paragraph
 
-Four Arduino boards. One watches the world through a camera and says what it
-sees. One decides whether that justifies moving, writes the decision to a
-tamper-evident log, and only then sends a command. One is a wheeled robot that
-executes the command, but refuses any command that does not carry a valid log
-reference. The fourth watches the third and can stop everything, and it is the
-only one with a physical button and a wire that cuts the robot off.
+Four Arduino boards, and a fifth in the architecture that has no firmware yet.
+One watches the world through a camera and says what it sees. One decides
+whether that justifies moving, writes the decision to a tamper-evident log, and
+only then sends a command. One is a wheeled robot that executes the command,
+but refuses any command that does not carry a valid log reference. The fourth
+watches the third and can stop everything: it has the physical button, and it
+holds a relay contact sitting in the robot's motor supply.
 
 ```
 UNO Q 4GB          VENTUNO Q                Alvik
 Perception    -->  Governance         -->   Robot body
-                        |
-                        | heartbeat + audit digests
-                        v
-                   UNO R4 WiFi
-                   Oversight  ----------->  (hard kill line to the Alvik)
+                        |                        ^
+                        | heartbeat +            | motor +V
+                        | audit digests          |
+                        v                        |
+                   UNO R4 WiFi                   |
+                   Oversight ---> Latch Relay ---+
+                                  bistable contact
 ```
+
+**The fifth board is the Nesso N1**, the out-of-band operator console. It is in
+`docs/architecture.md` and in the bill of materials because the design depends
+on it, and it is build step 13, which is not written. Nothing in this guide
+needs it. Buy it when the step lands, not before.
+
+### Why a relay and not a wire
+
+Earlier versions of this rig ran a signal wire from the oversight board into a
+kill-switch pin on the robot. It worked, and it had two faults worth
+understanding before you wire anything, because they are the reason this part
+of the build looks the way it does.
+
+It **released when the oversight board lost power**. A safety control that
+stops enforcing the moment its own board dies is enforcing nothing. The relay
+here is bistable: it holds its contact position with no current at all, so
+pulling the plug on the oversight board leaves the motors exactly as isolated
+as they were a moment before.
+
+It **needed the robot's cooperation**. The kill line worked only because the
+robot's firmware chose to read that pin. Reflash the robot and the line meant
+nothing: a governance control bolted onto the thing it was meant to govern. The
+contact is in the motor supply. There is nothing for the robot to agree to.
 
 ### Four safety rules, before anything else
 
@@ -65,23 +91,24 @@ not expect it to.
    down.
 2. **Know where the override button is** before you power anything on. Put it
    somewhere you can hit without looking.
-3. **Never bypass the kill line to make a demo work.** If commands are being
-   refused, the system is telling you something true. Read Part 12 rather than
-   unplugging D3.
-4. **Common ground or nothing.** The kill line only works if the R4 and the
-   Alvik share a ground. A floating wire reads as noise, and this is the one
-   failure this design cannot detect for you.
+3. **Never bridge the relay contact to make a demo work.** If the wheels are
+   not turning, the system is telling you something true. Read Part 12 rather
+   than shorting the two motor-supply terminals together.
+4. **The relay is a switch, not a fuse.** It interrupts the motor supply. It
+   does nothing about the battery, which is still connected and can still
+   deliver a short-circuit current. Disconnect the battery before you touch
+   any of the motor wiring, every time.
 
 ### How long this takes
 
 | Part | Time | Needs hardware |
 |---|---|---|
 | Part 2, software only | 20 minutes | No |
-| Parts 3 to 6, flash and wire | 1 to 2 hours | Yes |
+| Parts 3 to 6, flash and wire | 2 to 3 hours | Yes |
 | Parts 7 to 9, boards up and talking | 2 to 3 hours | Yes |
 | Part 10, verification | 30 minutes | Yes |
 
-Do Part 2 first even if all four boards are on your desk. It proves your
+Do Part 2 first even if every board is on your desk. It proves your
 software works before any hardware can confuse the picture.
 
 ---
@@ -95,29 +122,38 @@ software works before any hardware can confuse the picture.
 | Arduino UNO Q 4GB | Perception node | Needs a camera, see below |
 | Arduino VENTUNO Q | Governance node | Runs Linux, SQLite and the filter |
 | Arduino Alvik | The robot body | Ships with an 18650 battery |
-| Arduino UNO R4 WiFi | Oversight node | The one this guide adds |
+| Arduino UNO R4 WiFi | Oversight node and safety arbiter | Holds the relay |
+| Arduino Nesso N1 | Out-of-band console | Build step 13. Not used by this guide. |
 
 ### Parts you will also need
 
 | Item | Quantity | Why |
 |---|---|---|
+| Modulino Latch Relay (ABX00138) | 1 | The physical safety path. Bistable. |
+| Qwiic cable | 1 | R4 to the relay module. Ships with the Modulino. |
+| Opto-isolator, PC817 or equivalent | 2 | The two sense channels. See Part 6. |
+| Resistor, 1 kΩ, 1/4 W | 2 | Series resistors for the opto LEDs |
 | Momentary push button, normally closed (NC) | 1 | The override button. NC matters: see Part 6. |
 | Momentary push button, normally open (NO) | 1 | The clear button |
-| Jumper wires, male to male | 4 | Kill line, ground, two buttons |
+| Jumper wires, male to male | 8 | Two buttons, two sense channels |
+| Wire suitable for motor current, 22 AWG or thicker | short lengths | The break in the motor supply |
 | USB-C cable, data-capable | 3 | Board interconnects |
 | USB-C power supply | 2 | UNO Q and VENTUNO Q |
-| Camera module for the UNO Q ISP | 1 or 2 | See the note below |
+| Arducam IMX219 8 MP camera module | 2 | See the note below |
 | Breadboard, half size | 1 | Optional, but easier than soldering |
 
 **Charging cables are not data cables.** Many USB-C cables carry power only.
 If a board does not appear as a serial device, suspect the cable first. This
 wastes more beginner hours than any other single thing.
 
-**On the camera**: at the time of writing no Arduino-native CSI module for the
-UNO Q 4GB has been confirmed. `docs/cowork-bom-arduino.md` tracks the search.
-You do not need a camera to complete this guide: the synthetic frame source in
-Part 9 substitutes for one, and every governance control can be verified
-without it.
+**On the cameras**: the Arducam IMX219 8 MP module, two of them, splayed for
+roughly 120° of coverage. Both CSI ribbon adapters ship in the box, so there is
+no cable to choose. What is *not* settled is whether the CSI path binds cleanly
+on the Qualcomm camera pipeline; `docs/architecture-reconciliation.md` section
+7.1 has the detail, and a USB UVC webcam on the same capture abstraction is the
+fallback. You do not need a camera at all to complete this guide: the synthetic
+frame source in Part 9 substitutes for one, and every governance control in
+Part 10 can be verified without a lens.
 
 ### On the buttons
 
@@ -198,8 +234,10 @@ suite. It takes about a minute. You should see, at the end of each module:
 
 ```
 Required test coverage of 98% reached. Total coverage: 100.00%
-512 passed
+604 passed
 ```
+
+and 99 passed for the audit service, 703 in total.
 
 If `make qa` passes, your software is sound and any later problem is hardware
 or wiring. That is worth the minute.
@@ -360,9 +398,12 @@ mpremote connect /dev/ttyACM0 fs ls
 You should see all three files. Reset the board (the button on the Alvik) and
 it will start listening for commands over USB-C.
 
-**The Alvik's kill-switch pin is D4**, active low. Part 6 wires the R4 to it.
-Until then the pin floats, which the firmware reads as "not pressed". That is
-why the wheels stay on blocks.
+**The Alvik's D4 pin is a local test input**, active low, and it is not a
+governance control. Nothing in this build wires anything to it. It exists so
+you can stop the motors from the robot's own firmware while you are working on
+that firmware. The control that matters is the relay contact in the motor
+supply, which the Alvik cannot see, read or refuse. That is Part 6, and it is
+why the wheels stay on blocks until then.
 
 ---
 
@@ -399,12 +440,19 @@ Look at the 12x8 LED matrix. Within a second of boot you should see a **steady
 rectangular outline**: the WATCHING glyph. That means the state machine is
 running.
 
-The kill line on D3 is held **low** at this point, because no heartbeat has
-arrived yet. That is correct: a governance tier that has not said anything has
-not earned the authority to move a robot. The line releases by itself when the
-VENTUNO Q starts talking in Part 9.
+**Listen for the relay.** Within the same second the board sends the contact
+to open, whether or not it was already there, and you should hear a distinct
+click from the module if it is connected. No heartbeat has arrived yet, and a
+governance tier that has not said anything has not earned the authority to move
+a robot. The contact closes by itself when the VENTUNO Q starts talking in
+Part 9, and not before.
 
-The four glyphs:
+If the relay is not connected yet, the matrix will settle on the split-bar
+LATCH glyph after a second or two rather than the outline. That is correct: the
+board asked for a position, could not observe one, and refuses to pretend. It
+clears once Part 6 is wired.
+
+The five glyphs:
 
 | Glyph | Meaning |
 |---|---|
@@ -412,44 +460,147 @@ The four glyphs:
 | Solid block | OVERRIDE. An operator pressed the button. |
 | Broken bars | STALE. The governance tier stopped reporting. |
 | Diagonal cross | ATTEST. The audit digest stream skipped or rewound. |
+| Two split boxes | LATCH. The relay is not where it was told to be, or cannot be seen. |
 
 ---
 
-## Part 6: Wire the kill line
+## Part 6: Wire the latch relay
 
-Power everything **off** before wiring.
+This is the longest part of the build and the only one that touches motor
+wiring. Read it through before starting.
 
-### 6.1 The connections
+**Power everything off and disconnect the Alvik's battery.** The relay
+interrupts the motor supply; it does not disconnect the battery, and the
+battery is what can deliver a damaging current into a slipped screwdriver.
+
+### 6.1 What you are building
+
+Three separate things, and it is worth keeping them separate in your head.
+
+1. **The control path.** A Qwiic cable from the R4 to the Modulino Latch Relay.
+   This is how the R4 moves the contact.
+2. **The power path.** The relay's contact, wired into the break you make in
+   the Alvik's motor supply. This is what actually stops the robot.
+3. **The observation path.** Two opto-isolators reporting back to the R4 where
+   the contact really is. This is what stops the R4 from *believing* it
+   stopped the robot when it did not.
+
+The third is the part people leave out, and it is the part that turns a
+mechanism into a control. A relay you cannot read is an assertion.
+
+### 6.2 The control path
+
+Plug the Qwiic cable from the R4's Qwiic connector into the Modulino Latch
+Relay. That is the whole step: the cable carries power, ground and I2C, it only
+fits one way, and no jumpers or resistors are involved.
+
+The module answers at I2C address `0x2A`. If yours is on a different address,
+change `LATCH_I2C_ADDR` in `r4-supervisor/latch.h` and reflash.
+
+### 6.3 The power path
+
+Find the wire carrying positive supply from the Alvik's battery to its motor
+driver. Cut it. Connect the battery side to one contact terminal on the relay,
+and the motor side to the other.
+
+That is the entire physical safety argument, and it is worth pausing on why
+it is arranged this way rather than any of the easier alternatives:
+
+- **In the supply, not in a signal.** The robot has no pin to read and no
+  firmware decision to make. Reflashing it changes nothing.
+- **Normally open.** An unlatched relay leaves the contact open, so a module
+  that has never been commanded is a module that is not letting the robot move.
+- **Bistable.** The contact holds position with no coil current. Unplug the R4,
+  reboot the VENTUNO Q, pull the Qwiic cable: the contact stays where the last
+  command put it. This is the property the signal wire it replaces did not
+  have, and it is why a power cut at the oversight board is no longer a way to
+  un-isolate the motors.
+
+Keep this wiring short and mechanically secure. It carries the full motor
+current, and an intermittent joint here presents as a robot that stutters for
+reasons nothing in the audit log explains.
+
+### 6.4 The observation path, and why it is two channels
+
+The R4 has to know where the contact actually is, and it must never mistake
+"I cannot see it" for "it is open".
+
+That is harder than it sounds with one wire. Whichever way you wire a single
+sense input, one of its two readings is also what a broken wire produces. So
+one contact position becomes indistinguishable from a fault, and if that
+position happens to be *open*, a cut wire tells the R4 the motors are isolated
+when in truth it knows nothing about them. That is the single most dangerous
+sentence this system could say, so the sense is built so it cannot say it.
+
+Two channels, wired to disagree with each other:
+
+| Channel | Opto LED across | Lit when | R4 pin |
+|---|---|---|---|
+| A | The relay contact itself | The contact is **open** | D3 |
+| B | The motor rail, downstream of the contact | The rail is **live**, so the contact is closed | D5 |
+
+Exactly one of them should ever be lit. The R4 reads both:
+
+| A | B | Reading |
+|---|---|---|
+| Lit | Dark | OPEN. Motors isolated, and observed to be. |
+| Dark | Lit | CLOSED. Motor supply available. |
+| Dark | Dark | UNKNOWN. Cut harness, dead opto, flat battery. |
+| Lit | Lit | UNKNOWN. Shorted harness. |
+
+UNKNOWN is never rounded up to isolation. The R4 latches an override, shows the
+LATCH glyph, and tells the governance tier, which raises its own override
+independently.
+
+### 6.5 The sense connections
+
+Each opto-isolator has an LED side (pins 1 and 2) and a transistor side
+(pins 3 and 4). The LED side goes on the motor supply. The transistor side goes
+to the R4. Nothing electrically crosses between them, which is why no shared
+ground is needed for these two channels.
+
+**Channel A, "the contact is open":**
+
+| From | To |
+|---|---|
+| Battery-side contact terminal | 1 kΩ resistor, then opto A pin 1 (anode) |
+| Opto A pin 2 (cathode) | Motor-side contact terminal |
+| Opto A pin 4 (collector) | R4 D3 |
+| Opto A pin 3 (emitter) | R4 GND |
+
+The LED sits across the contact, so it sees the full battery voltage when the
+contact is open and nothing at all when it is closed.
+
+**Channel B, "the motor rail is live":**
+
+| From | To |
+|---|---|
+| Motor-side contact terminal | 1 kΩ resistor, then opto B pin 1 (anode) |
+| Opto B pin 2 (cathode) | Alvik battery negative |
+| Opto B pin 4 (collector) | R4 D5 |
+| Opto B pin 3 (emitter) | R4 GND |
+
+Both R4 inputs use the internal pull-ups configured in `setup()`, so a channel
+whose opto is dark reads high, and a channel whose opto conducts reads low. No
+resistors on the R4 side.
+
+### 6.6 The buttons
 
 | From | To | Wire |
 |---|---|---|
-| R4 D3 | Alvik D4 | Kill line |
-| R4 GND | Alvik GND | Common ground, mandatory |
 | R4 D2 | One leg of the NC button | Override button |
 | Other leg of the NC button | R4 GND | Override button return |
 | R4 D4 | One leg of the NO button | Clear button |
 | Other leg of the NO button | R4 GND | Clear button return |
 
-No resistors are needed. Both inputs use the R4's internal pull-ups, configured
-in `setup()`.
+Internal pull-ups again, no resistors.
 
-### 6.2 Why the ground wire is not optional
+### 6.7 Check the override button before you trust it
 
-Digital logic reads voltage relative to ground. Without a shared ground, the
-Alvik has no fixed reference for what the R4 is putting on D3, and the pin
-reads noise. It might read high, it might read low, it might change as you move
-your hand near it. The kill line becomes decorative.
-
-Connect the grounds first, before the signal wire. Then check it: with both
-boards off, a multimeter set to continuity should beep between R4 GND and Alvik
-GND.
-
-### 6.3 Check the override button before you trust it
-
-With the R4 powered and nothing else connected:
+With the R4 powered and the relay connected:
 
 1. Press and hold the override button. The matrix should switch to the solid
-   block within about 30 ms.
+   block within about 30 ms, and you should hear the relay click open.
 2. Release it. **The block stays.** That is the latch, and it is correct.
 3. Press the clear button. Nothing happens yet, because no heartbeat has ever
    arrived and the node will not conclude the governance tier is healthy on the
@@ -460,6 +611,24 @@ normally closed: with the button untouched, a multimeter on continuity should
 beep between its legs, and stop beeping while pressed. A normally open button
 in that slot gives you a permanently asserted override, which looks like a
 broken board.
+
+### 6.8 Check the observation before you trust that
+
+Reconnect the Alvik's battery and switch the robot on, wheels still off the
+ground. With the R4 running and no heartbeat arriving, the contact should be
+open.
+
+1. The matrix should show the **outline**, not the split bars. The outline
+   means the R4 asked for open, looked, and saw open. Split bars mean it looked
+   and could not agree with what it saw.
+2. Unplug channel A's wire from D3. Within about 100 ms the matrix should
+   switch to the split bars: both channels now read dark, which is UNKNOWN, and
+   the R4 refuses to claim an isolation it can no longer observe.
+3. Plug it back in and press clear. The outline returns.
+
+Step 2 is the test that matters here. A rig that passes steps 1 and 3 but not 2
+has a working relay and a decorative sense circuit, and it will tell you the
+motors are isolated on the day they are not.
 
 ---
 
@@ -588,8 +757,9 @@ free.
 Order matters, because each board fails safe when the one below it is absent.
 
 1. **Alvik.** Switch on. It waits for commands.
-2. **UNO R4 WiFi.** The matrix shows WATCHING and the kill line is held low, so
-   the Alvik is refusing everything.
+2. **UNO R4 WiFi.** The matrix shows WATCHING and the relay contact is open, so
+   the Alvik has no motor supply at all. Commands would be accepted and the
+   wheels would not turn.
 3. **VENTUNO Q.** Boot it, but do not start the service yet.
 4. **UNO Q.** Boot it, but do not start the service yet.
 
@@ -620,9 +790,11 @@ PYTHONPATH=../audit-service python3 -m governance.ventuno_q_service \
 
 Substitute your two device paths.
 
-**Watch the R4 as this starts.** The kill line releases within a second, as
-soon as the first heartbeat lands. The matrix stays on WATCHING. If it switches
-to STALE, the heartbeat is not arriving: see Part 12.
+**Watch the R4 as this starts.** The contact closes within a second, as soon as
+the first heartbeat lands, and you should hear it. The matrix stays on
+WATCHING. If it switches to STALE, the heartbeat is not arriving; if it switches
+to the split bars, the contact did not go where it was told or cannot be
+observed. Both are in Part 12.
 
 ### 9.4 Start the perception service
 
@@ -666,7 +838,8 @@ project is the difference between the two.
 ### Test 1: the override button stops actuation
 
 1. With everything running and commands flowing, **press the override button**.
-2. The matrix switches to the solid block. The wheels stop.
+2. The matrix switches to the solid block, the relay clicks, and the wheels
+   stop.
 3. Check the log:
 
 ```bash
@@ -695,26 +868,60 @@ governance tier has no message that clears an override, which is checked by
 ### Test 4: losing governance stops the robot
 
 1. On the VENTUNO Q, stop the governance service with Ctrl-C.
-2. Within 2 seconds the matrix switches to **STALE** and the kill line asserts.
+2. Within 2 seconds the matrix switches to **STALE** and the contact opens.
 3. Restart the service. The R4 stays in STALE: the override latched and needs
    the clear button.
 
 This is the control that matters most and is least visible. A governance
 process that crashes does not leave a robot running on its last instruction.
 
-### Test 5: the hard kill line works on its own
+### Test 5: the physical path works on its own
 
 1. Clear the override so everything is running.
-2. Unplug the **USB-C cable between the R4 and the VENTUNO Q**, leaving the D3
-   kill wire connected.
+2. Unplug the **USB-C cable between the R4 and the VENTUNO Q**, leaving the
+   Qwiic cable and the relay in place.
 3. Press the override button. The R4 is now unable to tell the governance tier
-   anything, but the wheels still stop, because D3 drives the Alvik's
-   kill-switch input directly.
+   anything, and the wheels still stop, because the motor supply is open.
 
 That is the two-path design: the soft veto travels on a link that could be cut
-or forged, and the hard line does not travel on a link at all.
+or forged, and the contact does not travel on a link at all.
 
-### Test 6: the audit log detects tampering
+### Test 6: enforcement outlives the enforcer
+
+The test the signal wire this replaces would have failed.
+
+1. Press the override so the contact is open and the wheels are stopped.
+2. **Unplug the R4 entirely**, USB and Qwiic both. The oversight board is now
+   dead and the relay has no connection to anything.
+3. The wheels stay stopped. The contact is bistable: it holds its position with
+   no current at all.
+4. Power the R4 back up. It comes back not assuming anything, reads the contact
+   and finds it open, and holds it there until a heartbeat arrives.
+
+An earlier version of this rig used a driven GPIO line, and step 2 released it.
+A safety control that stops enforcing when its own board loses power is not a
+safety control, and this is the test that says so out loud.
+
+### Test 7: the R4 will not claim an isolation it cannot see
+
+1. With everything running, press the override. Contact open, wheels stopped,
+   solid block on the matrix.
+2. Unplug the channel A sense wire from D3.
+3. Within about 100 ms the matrix switches to the split bars. Both channels now
+   read dark, which is UNKNOWN, not OPEN.
+4. On the VENTUNO Q, check that the governance tier noticed independently:
+
+```bash
+sqlite3 /data/audit.db \
+  "SELECT id, ts, notes FROM audit_log WHERE notes LIKE '%LATCH%' \
+   ORDER BY id DESC LIMIT 5;"
+```
+
+The motors are still isolated throughout this test. What changed is that the
+system stopped being able to *prove* it, and said so rather than carrying on.
+That distinction is the whole design.
+
+### Test 8: the audit log detects tampering
 
 ```bash
 cd /opt/governed-edge-ai/linux-stack
@@ -738,10 +945,10 @@ intact. Reconciling against the digests the R4 witnessed is what catches it,
 and that comparison needs the digests read back from the board. The mechanism,
 its reach and its limits are described in `r4-supervisor/README.md`.
 
-### Test 7: put it on the floor
+### Test 9: put it on the floor
 
-Only now. Repeat Test 1 with the Alvik on the ground and your hand on the
-override button.
+Only now, and only if Tests 1 to 7 all passed. Repeat Test 1 with the Alvik on
+the ground and your hand on the override button.
 
 ---
 
@@ -899,12 +1106,35 @@ Look at `stm32_ack` in the audit log:
 
 | Value | Meaning | Where to look |
 |---|---|---|
-| `1` | The Alvik accepted and executed | The problem is mechanical: battery, motors, wheels |
-| `0` | The Alvik refused | Kill line asserted, or confidence below its gate |
+| `1` | The Alvik accepted and executed | The relay contact, then mechanics: battery, motors, wheels |
+| `0` | The Alvik refused | Confidence below its own gate, or a missing audit reference |
 | `NULL` | No reply arrived | Serial link to the Alvik: wrong device, bad cable, firmware not running |
 
-For `0`: check whether the R4 is holding an override, and whether D3 is
-actually connected to the Alvik's D4.
+`stm32_ack = 1` with wheels that do not turn is the normal signature of an open
+contact, and it is not a bug: the robot accepted a lawful command and had no
+motor supply to execute it with. Check the matrix first.
+
+### The matrix shows the split bars and will not clear
+
+The relay is not where the R4 told it to be, or the R4 cannot see where it is.
+In order:
+
+1. **Is the Qwiic cable seated?** With no I2C reply the module register reads
+   UNKNOWN and nothing can agree.
+2. **Is the Alvik's battery connected and the robot switched on?** Both sense
+   channels are powered from the motor supply. A flat or disconnected battery
+   leaves them both dark, which is UNKNOWN, which is correct and not a fault in
+   the R4.
+3. **Are both sense channels connected, D3 and D5?** Unplug one deliberately
+   and confirm the glyph appears; that at least proves the detection works.
+4. **Are the optos the right way round?** An LED in backwards never lights, so
+   its channel reads dark permanently and the pair is never complementary.
+5. **Is the contact welded?** If the register says one thing and both channels
+   insist on the other, the relay itself has failed. Replace the module. Do not
+   work around this in software.
+
+Pressing clear will not help while the disagreement persists: the R4
+re-latches on the next poll, about 100 ms later. Fix the observation first.
 
 For `NULL`: confirm with `mpremote connect /dev/alvik fs ls` that the firmware
 files are on the board.
@@ -942,6 +1172,13 @@ Check that the governance service is bound (`Listening for UNO Q on
 ### Everything worked yesterday and nothing works today
 
 Device paths shuffled on reboot. Part 11.1.
+
+### The relay clicks but the wheels never move
+
+The contact is closing and the motor supply still is not reaching the driver.
+Check the two joints you made in Part 6.3 with a multimeter, with the battery
+disconnected. An intermittent joint there presents as a robot that stutters for
+reasons nothing in the audit log explains.
 
 ### The override button does nothing
 
@@ -1033,13 +1270,17 @@ make qa          # all of the above
 | **Fail closed** | When something breaks, stop. The opposite, fail open, keeps running. |
 | **Flash** | Write firmware onto a microcontroller. |
 | **GPIO** | A pin that can be read or driven high or low. |
+| **Opto-isolator** | An LED and a light sensor in one package. Passes a signal with no electrical connection between the two sides. |
 | **Hash chain** | Each entry's digest includes the previous one, so changing an old entry changes all later digests. |
 | **Heartbeat** | A periodic "I am alive" message. Its absence is the signal. |
 | **IPC** | Inter-processor communication. The binary protocol between boards. |
-| **Kill line** | A physical wire that stops the robot, independent of any software. |
+| **Antivalent** | Two sense channels wired to disagree. Any other combination means the observation failed, not that the thing moved. |
+| **Bistable** | A relay that holds its contact position with no current. Its state survives losing power. |
+| **Latch relay** | The bistable relay whose contact sits in the robot's motor supply. The physical stop. |
 | **Latch** | A state that stays set after its cause goes away, until deliberately cleared. |
 | **NC / NO** | Normally closed / normally open. An NC button opens the circuit when pressed. |
 | **Oversight node** | The UNO R4 WiFi. Watches the governance tier and can stop it. |
+| **Qwiic** | A four-wire connector carrying I2C, 3.3 V and ground. Only fits one way. |
 | **pty** | A pseudo-terminal: a software object that behaves like a serial port. Used by the mocks. |
 | **Suppression** | A detection that was logged but produced no command. Deliberate, and on record. |
 | **udev rule** | A Linux rule giving a device a stable name. |

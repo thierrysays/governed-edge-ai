@@ -1,119 +1,144 @@
 # Cowork Task: Arduino Store BOM for governed-edge-ai (Peripherals Only)
 
+Version 2.0, 2026-08-19. Supersedes the four-board version.
+
 ## Context
 
-I am building a Physical AI safety demonstrator called **governed-edge-ai** using a three-tier distributed architecture.
+I am building a Physical AI safety demonstrator called **governed-edge-ai**: governance controls enforced in circuitry rather than described in policy.
 
 **Project repo (public):** https://github.com/thierrysays/governed-edge-ai
 
-**All four main boards are already owned: do not include them in the BOM:**
-- Arduino VENTUNO Q (Qualcomm IQ8 NPU 40 TOPS + STM32H5, 16 GB RAM): Governance Brain
-- Arduino UNO Q 4GB (Qualcomm QRB2210 + STM32U585, dual ISP 13 MP, 4 GB): Perception Node
-- Arduino Alvik (ESP32-S3 + STM32F411, mobile robot): Physical Body
-- Arduino UNO R4 WiFi (Renesas RA4M1 + ESP32-S3, 12x8 LED matrix): Oversight Node
+**All five main boards are already owned. Do not include them in the BOM:**
+
+| Board | Role |
+|---|---|
+| Arduino VENTUNO Q (Qualcomm IQ8 NPU 40 TOPS + STM32H5, 16 GB RAM) | Decision path: perception, governance filter, audit journal |
+| Arduino UNO Q 4GB (Qualcomm QRB2210 + STM32U585, dual ISP 13 MP, 4 GB) | Independent witness; disagreement forces a HALT |
+| Arduino Alvik (ESP32-S3 + STM32F411, mobile robot) | The governed body |
+| Arduino UNO R4 WiFi (Renesas RA4M1 + ESP32-S3, 12x8 LED matrix, Qwiic) | Safety arbiter, outside the command chain |
+| Arduino Nesso N1 (ESP32-C6, 1.14" touchscreen, Wi-Fi 6 / BLE / LoRa) | Out-of-band operator console |
 
 ---
 
 ## Architecture
 
 ```
-                         UNO R4 WiFi
-                         Oversight node (Tier 0)
-                         Renesas RA4M1 + ESP32-S3
-                         Override button, LED matrix
-                              ▲            │
-              heartbeat +     │            │ soft veto (serial)
-              audit digests   │            │ hard kill line (GPIO)
-                              │            ▼
-UNO Q 4GB  ──────────►  VENTUNO Q  ──────────►  Alvik
-Perception node          Governance brain         Physical robot body
-(cameras via ISP)        (NPU + audit log)        (motors + ToF + IMU)
-Qualcomm QRB2210         Qualcomm IQ8 40 TOPS     ESP32-S3 + STM32F411
-STM32U585                STM32H5                  wheels, sensors
+                       Nesso N1
+                       out-of-band console
+                       verdicts out · signed HALT lift back
+                             ▲                    │
+                             │                    ▼
+UNO Q 4GB  ───────────► VENTUNO Q ──────────────────────► Alvik
+witness         2.5GbE  decision path, revocable    USB   governed body
+UVC webcam              perception · GovernanceFilter     motors · ToF · IMU
+independent model       signed audit journal                    ▲
+disagreement                    ▲                               │ motor +V
+forces HALT       heartbeat +   │  reports only                 │
+                  chain digests │                               │
+                           UNO R4 WiFi                          │
+                           safety arbiter                       │
+                           E-STOP / ARM / ACK · annunciator     │
+                                │ Qwiic I2C                     │
+                                ├──► Latch Relay ───────────────┘
+                                │    bistable · 0x2A
+                                ├──► Distance  (safety envelope)
+                                └──► Movement  (proof of stop)
 ```
 
-Data flow: UNO Q 4GB captures camera frames → runs initial detection → sends DetectionResult to VENTUNO Q → GovernanceFilter checks the oversight node, logs, gates, publishes an audit chain digest to the R4 → sends audited CommandRequest to Alvik → Alvik executes (HALT / MOVE / etc.) → returns CommandAck or CommandReject. The R4 can veto at any point, over serial or over its GPIO line straight into the Alvik's kill-switch pin.
+**The one thing to understand before shopping.** The physical stop is not a signal wire into the robot. It is a bistable relay contact sitting in the Alvik's motor supply, driven from the arbiter's own Qwiic bus and read back on two opto-isolated sense channels. That is why this BOM has a relay, two optos and motor-gauge wire in it, and why it no longer has a kill-line jumper.
 
 ---
 
-## What Still Needs to Be Purchased (Peripherals Only)
+## What still needs to be purchased
 
-### 1. Camera module(s) for UNO Q 4GB: CRITICAL
+### 1. Modulino Latch Relay: CRITICAL, the physical safety path
 
-The UNO Q 4GB has **2× ISP at 13 MP / 30 fps**. Without a camera, the perception node has no visual input.
+**Arduino Modulino Latch Relay, ABX00138** (bistable relay, HFE60/3-1HT-L2, Qwiic/I2C at `0x2A`).
 
-**Find on the Arduino store:**
-- Any camera module officially listed as compatible with the UNO Q 4GB
-- Look for: CSI ribbon cable camera, MIPI camera module, or any camera shield for UNO Q
-- Search terms: "camera", "UNO Q camera", "CSI camera", "IMX", "OV"
-- Need at minimum **1 camera** (ideally 2 to use both ISP channels: one for object detection, one for gesture/pose)
-- Note if no camera is sold by Arduino: I will need to source from a third party (e.g. Arducam, Waveshare)
+Its normally-open contact goes in series with the Alvik's motor supply. Bistable matters: the contact holds position with no coil current, so the motors stay isolated through a power cut at every board in the rig. A driven GPIO line would release, which is the fault this part replaces.
 
-### 2. Interconnect cables
+**Quantity 1.** Confirm the I2C address and whether the register reports the *commanded* position or the *observed* one; the firmware assumes the pessimistic case and treats the register as a cross-check only, but it is worth knowing which is true.
 
-**Between UNO Q 4GB and VENTUNO Q:**
-- If communicating over USB-C: standard USB-C to USB-C cable
-- If communicating over UART/GPIO: UART TTL jumper cables or a small breakout
+Search terms: "Modulino Relay", "latch relay", "ABX00138".
 
-**Between VENTUNO Q and Alvik:**
-- The Alvik connects via USB-C to the host board
-- Need a USB-C cable (check if Alvik ships with one)
+### 2. Modulino Distance and Modulino Movement
 
-**Find on the Arduino store:**
-- USB-C to USB-C cable (if sold)
-- GPIO / jumper wire set
-- Any ribbon cable for camera CSI
+Both attach to the same Qwiic bus on the arbiter, deliberately not on the decision host's bus.
 
-### 3. Power supplies
+- **Modulino Distance (ABX00102, VL53L4CD ToF)**: a safety envelope measured outside the vision pipeline. It also covers a real hole in the cameras, which cannot focus closer than 200 mm.
+- **Modulino Movement (ABX00101, 6-axis IMU)**: proof that the robot actually stopped, read by something that is not the robot.
 
-- **UNO Q 4GB:** check the recommended USB-C PD adapter wattage and whether one is included or sold separately
-- **VENTUNO Q:** check if a power adapter is sold separately
-- **Alvik:** runs on an 18650 Li-ion battery (check if pre-installed and if a charger is needed)
+**Quantity 1 each.**
 
-### 4. Arduino GIGA Display Bundle (optional, audit dashboard)
+### 3. Qwiic cables
 
-The GIGA R1 WiFi + GIGA Display Shield together provide a **physical audit log display** mounted on the demo rig. The GIGA R1 connects to the VENTUNO Q over Wi-Fi and polls the Flask audit dashboard API; the 3.97" touch display renders live governance events (detection type, confidence, audit_ref, HALT/MOVE decision, ACK/REJECT) without requiring a laptop.
+The arbiter drives three modules on one bus. Modulinos ship with a cable each, but confirm, and note lengths: the relay sits near the Alvik's battery compartment and the arbiter does not.
 
-- **GIGA R1 WiFi**: dual-core STM32H747 (Cortex-M7 480 MHz + M4 240 MHz), Wi-Fi + BT, USB-A host
-- **GIGA Display Shield**: 3.97" IPS 480×800 capacitive touch, camera connector (Arducam-compatible), microphone
+**Quantity: 3, plus one spare.** Search terms: "Qwiic cable", "JST-SH 4-pin".
 
-**Camera connector note**: the display shield's camera connector may accept the same Arducam MIPI modules sold for the UNO Q 4GB ISP. If so, the GIGA becomes a low-cost fallback perception node if the UNO Q camera is unavailable. Confirm compatibility when checking the Arduino store.
+### 4. Camera modules: SOURCED, do not search for these
 
-**Find on the Arduino store:**
-- Search "GIGA Display Bundle" for the bundled SKU (cheaper than buying separately)
-- Note individual SKUs for GIGA R1 WiFi and GIGA Display Shield if no bundle is listed
-- Confirm whether the GIGA Display Shield camera connector accepts standard MIPI CSI modules
+Settled outside the Arduino store: **Arducam IMX219 8 MP**, two of them, from Kubii (EAN 3272496309692). Both CSI ribbon adapters ship in the box, 15-pin to 22-pin and 22-pin to 22-pin, so there is no adapter to buy.
 
-### 5. Oversight node parts (UNO R4 WiFi): REQUIRED
+One thing is still worth sourcing: **longer CSI ribbon cables**. The supplied ones are 15 cm, and the two cameras have to be splayed roughly 52° apart on a mount while reaching the VENTUNO Q. 30 cm to 50 cm, matching whichever connector the VENTUNO Q presents.
 
-The R4 itself is owned. It needs two buttons, wire and a shared ground with the Alvik.
+**Also worth having: one USB UVC webcam.** The witness UNO Q needs one anyway, and it is the fallback if the CSI path does not bind cleanly on the Qualcomm camera pipeline, which is an open question. Any UVC-class webcam.
 
-**Find on the Arduino store:**
-- **Momentary push button, normally closed (NC)**: the override button, wired to D2. Normally closed matters: a cut wire, a pulled connector or a failed switch then all read as a press, so the system fails towards stopping. If the Arduino store sells only NO buttons, note it: an NC switch may need to come from an electronics supplier, and it is worth sourcing correctly rather than substituting.
+### 5. Sense circuit parts for the arbiter
+
+The arbiter reads the relay contact back on two opto-isolated channels, wired antivalent so that a broken wire reads as "cannot see" rather than as a position. Neither the Arduino store nor a Modulino covers this; any electronics supplier will.
+
+| Part | Qty | Purpose |
+|---|---|---|
+| Opto-isolator, PC817 or equivalent | 2 | Channel A across the contact, channel B across the motor rail |
+| Resistor, 1 kΩ, 1/4 W | 2 | Series resistors for the opto LEDs |
+| Wire, 22 AWG or thicker | short lengths | The break in the motor supply. Carries full motor current. |
+
+No resistors on the arbiter side: both inputs use the board's internal pull-ups.
+
+### 6. Buttons for the arbiter
+
+- **Momentary push button, normally closed (NC)**: the override button, wired to D2. Normally closed matters: a cut wire, a pulled connector or a failed switch then all read as a press, so the system fails towards stopping. If the Arduino store sells only NO buttons, say so explicitly. An NC switch may need to come from an electronics supplier, and substituting an NO one would silently defeat the fail-safe wiring, with the failure appearing only when the button was needed.
 - **Momentary push button, normally open (NO)**: the clear button, wired to D4. A standard tactile switch is fine.
-- **Jumper wires, male to male**: four minimum. D3 to the Alvik's D4 (kill line), R4 GND to Alvik GND (mandatory common ground), plus the two button returns.
-- **Half-size breadboard**: optional, but avoids soldering.
-- **USB-C cable, data-capable**: VENTUNO Q to R4. Confirm it carries data, not power only.
+- **Jumper wires, male to male**: eight. Two button returns, two sense channels, spares.
+- **Half-size breadboard**: optional, avoids soldering.
 
-No resistors are needed: both inputs use the R4's internal pull-ups.
+Search terms: "push button", "tactile switch", "normally closed switch", "jumper wires", "breadboard".
 
-Search terms: "push button", "tactile switch", "normally closed switch", "jumper wires", "breadboard", "grove button".
+### 7. Interconnect cables and power
 
-### 6. Other optional accessories
+- **USB-C data cable, VENTUNO Q to Alvik**: check whether the Alvik ships with one.
+- **USB-C data cable, VENTUNO Q to UNO R4 WiFi**: the oversight link, 921600 baud. Must carry data, not power only.
+- **Ethernet, UNO Q to VENTUNO Q**: the design calls for 2.5 GbE rather than Wi-Fi. A USB-C Ethernet adapter if neither board has a port, plus a short Cat 6 patch lead.
+- **Power supply for the UNO Q 4GB**: check the recommended USB-C PD wattage and whether one is included.
+- **Power supply for the VENTUNO Q**: check whether an adapter is sold separately.
+- **Alvik battery and charger**: 18650 Li-ion. Check whether it is pre-installed and whether a charger is needed. A **spare 18650** is worth having: the sense circuit draws from the motor supply, and bench work runs the battery down faster than driving does.
 
-- **MicroSD card**: for persistent audit log storage beyond SQLite on the VENTUNO Q (if a slot is available)
-- **Mounting hardware / enclosure**: to fix the UNO Q 4GB and VENTUNO Q together for stable demos
-- **Ethernet adapter**: if Wi-Fi is not used for UNO Q ↔ VENTUNO Q communication (USB-C Ethernet dongle)
+### 8. Storage for the audit journal
+
+The audit journal is the governance artefact, and it should not share a disk with the operating system.
+
+- **M.2 NVMe SSD** if the VENTUNO Q takes one: check the form factor and key.
+- **MicroSD card** otherwise, if a slot is available.
+
+### 9. Superseded: the GIGA Display Bundle
+
+Earlier versions of this BOM proposed a GIGA R1 WiFi plus Display Shield as a physical audit dashboard. **The Nesso N1 replaces it** and is already owned. Do not price the GIGA bundle.
+
+### 10. Other optional accessories
+
+- **Camera mount** holding two modules at a fixed, repeatable splay. The splay angle defines the safety envelope, so a mount that shifts is a control that drifts silently. A 3D-printed bracket or a machined plate, not tape.
+- **Mounting hardware or an enclosure** to fix the UNO Q and VENTUNO Q together for stable demos.
 
 ---
 
 ## Your Task
 
 1. Go to **https://store.arduino.cc**
-2. For each of the six categories above, find matching products and note name, SKU, price, and stock status
-3. Pay particular attention to **camera compatibility with the UNO Q 4GB**: this is the most critical unknown
-4. For the GIGA Display Bundle: confirm whether a bundled SKU exists and whether the display shield camera connector accepts standard MIPI CSI modules
-5. If an item is not available on the Arduino store, note it clearly so I can source it elsewhere
+2. For each category above, find matching products and note name, SKU, price, and stock status
+3. Pay particular attention to the **Modulino Latch Relay**: it is the critical part in this revision, and the build has no physical enforcement without it
+4. Note the **Qwiic cable lengths** supplied with each Modulino
+5. If an item is not available on the Arduino store, note it clearly so I can source it elsewhere. The optos, resistors and NC button are all expected to fall in that category.
 
 ---
 
@@ -123,24 +148,29 @@ Produce a complete **Bill of Materials (BOM)** covering peripherals only:
 
 | # | Product Name | SKU | Unit Price (EUR) | Qty | Total (EUR) | Purpose | Stock |
 |---|---|---|---|---|---|---|---|
-| 1 | Camera module (UNO Q ISP) | ... | ... | 1–2 | ... | Visual input for perception pipeline | ... |
-| 2 | USB-C cable (UNO Q ↔ VENTUNO Q) | ... | ... | 1 | ... | Board interconnect | ... |
-| 3 | USB-C cable (VENTUNO Q ↔ Alvik) | ... | ... | 1 | ... | IPC channel to robot | ... |
-| 4 | Power supply: UNO Q 4GB | ... | ... | 1 | ... | Power | ... |
-| 5 | Power supply: VENTUNO Q | ... | ... | 1 | ... | Power | ... |
-| 6 | Momentary button, NC | ... | ... | 1 | ... | Oversight override button (R4 D2) | ... |
-| 7 | Momentary button, NO | ... | ... | 1 | ... | Oversight clear button (R4 D4) | ... |
-| 8 | Jumper wire set | ... | ... | 1 | ... | Kill line, ground, button returns | ... |
-| 9 | USB-C cable (VENTUNO Q ↔ R4) | ... | ... | 1 | ... | Oversight link | ... |
-| 10 | GIGA R1 WiFi (optional) | ... | ... | 1 | ... | Physical audit dashboard | ... |
-| 11 | GIGA Display Shield (optional) | ... | ... | 1 | ... | 3.97" touch screen for audit log | ... |
-| ... | | | | | | | |
+| 1 | Modulino Latch Relay | ABX00138 | ... | 1 | ... | Physical stop: contact in the motor supply | ... |
+| 2 | Modulino Distance | ABX00102 | ... | 1 | ... | Safety envelope outside the vision pipeline | ... |
+| 3 | Modulino Movement | ABX00101 | ... | 1 | ... | Proof of stop, read off the robot | ... |
+| 4 | Qwiic cable | ... | ... | 4 | ... | Arbiter to the three modules, plus a spare | ... |
+| 5 | CSI ribbon cable, 30 to 50 cm | ... | ... | 2 | ... | Cameras to the VENTUNO Q | ... |
+| 6 | USB UVC webcam | ... | ... | 1 | ... | Witness node, and CSI fallback | ... |
+| 7 | Opto-isolator PC817 | n/a | ... | 2 | ... | Antivalent contact sense | ... |
+| 8 | Resistor 1 kΩ | n/a | ... | 2 | ... | Opto LED series resistors | ... |
+| 9 | Momentary button, NC | ... | ... | 1 | ... | Override button (arbiter D2) | ... |
+| 10 | Momentary button, NO | ... | ... | 1 | ... | Clear button (arbiter D4) | ... |
+| 11 | Jumper wire set | ... | ... | 1 | ... | Buttons and sense channels | ... |
+| 12 | USB-C data cable | ... | ... | 2 | ... | Oversight link, Alvik link | ... |
+| 13 | Ethernet adapter + patch lead | ... | ... | 1 | ... | Witness to decision path | ... |
+| 14 | Power supply: UNO Q 4GB | ... | ... | 1 | ... | Power | ... |
+| 15 | Power supply: VENTUNO Q | ... | ... | 1 | ... | Power | ... |
+| 16 | 18650 cell, spare | ... | ... | 1 | ... | Alvik motor supply | ... |
+| 17 | M.2 NVMe or microSD | ... | ... | 1 | ... | Audit journal, off the OS disk | ... |
 | | | | **TOTAL (required)** | | **€XX.XX** | | |
 | | | | **TOTAL (with optional)** | | **€XX.XX** | | |
 
 **Important notes to include:**
-- For the NC override button: if the Arduino store carries only normally open buttons, say so explicitly and suggest a supplier for a normally closed one. Substituting NO for NC would silently defeat the fail-safe wiring, and the failure would only appear when the button was needed.
-- If no camera is available on the Arduino store: flag it and suggest the closest third-party alternative (Arducam MIPI, Raspberry Pi Camera Module 3, etc.) with approximate price
-- If the Alvik ships with everything needed (battery, USB cable): note "included" so I don't double-buy
-- For the GIGA Display Bundle: note if a bundled SKU exists (likely cheaper) and confirm MIPI camera connector compatibility
-- Direct product URLs from store.arduino.cc for every item found there
+
+- If the Modulino Latch Relay is out of stock, say so prominently and name the lead time. Nothing else in this list substitutes for it.
+- For the NC override button: if the Arduino store carries only normally open buttons, say so explicitly and suggest a supplier for a normally closed one.
+- If the Alvik ships with a battery and cable, note "included" so I do not double-buy.
+- Direct product URLs from store.arduino.cc for every item found there.

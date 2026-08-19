@@ -1,15 +1,34 @@
 # Cowork Brief: governed-edge-ai.html
 
-**Target page**: `https://www.glossolalie.pro/governed-edge-ai.html`  
-**Task**: Create this page from scratch (it does not exist yet) and commit the file as part of the site's flat `public_html/` deployment package.
+**Version 2.0, 19 August 2026.** Supersedes v1, which described a three-board rig with 241 tests. Almost every number and half the architecture in v1 is now wrong. **This revision is an update brief, not a create-from-scratch brief.**
+
+**Target page**: `https://www.glossolalie.pro/governed-edge-ai.html`
+**Task**: bring the existing page and its i18n keys in line with the project as it now stands.
+
+---
+
+## What changed since v1, in one table
+
+Read this before touching anything. If the live page still says any of the left-hand column, it needs the right-hand one.
+
+| Element | v1 said | Now |
+|---|---|---|
+| Boards | 3 Arduino | **5** Arduino: UNO Q 4GB, VENTUNO Q, Alvik, UNO R4 WiFi, Nesso N1 |
+| Tests | 241, 95.76% coverage | **703**, **100%** line coverage on both modules, gate at 98% |
+| Build steps | 8 | **11 shipped**, six more designed and scheduled |
+| Physical stop | "hardware kill switch" on the robot | **Bistable relay contact in the robot's motor supply**, held by a board that is not on the command chain |
+| Licence | MIT | **Apache 2.0** for code, CERN OHL-P v2 for hardware files, CC BY 4.0 for documentation |
+| Perception | On the UNO Q, primary | On the UNO Q today; the UNO Q is being reclassified as an **independent witness** whose disagreement forces a HALT |
+| Cameras | Unsourced | **Arducam IMX219 8 MP, two of them**, splayed for roughly 120° |
+| Cost | Under EUR 200 | **Do not restate a figure.** Five boards plus a relay and two cameras is well past EUR 200, and the honest claim now is "commodity parts, no bespoke silicon", not a price. |
+
+The old cost claim is the one to be most careful with: it was true of the three-board rig and repeating it now would be a false statement on a page whose entire argument is about not overclaiming.
 
 ---
 
 ## Context
 
-Thierry Sayegh (Glossolalie Advisory, Paris) is publishing a technical case study titled **"Governed Physical AI"**, an open-source demonstration that governance and audit controls identical to those required by the EU AI Act can be implemented end-to-end on commodity embedded hardware costing under EUR 200.
-
-The project repository is `https://github.com/thierrysays/governed-edge-ai` (public). The page is a project showcase page on `glossolalie.pro`, not a blog article. It should read as a senior practitioner's note to peers, not a tutorial aimed at beginners.
+Thierry Sayegh-Sauvage (Glossolalie Advisory, Paris) maintains **governed-edge-ai**, an open-source demonstrator showing that AI governance controls can be enforced in circuitry rather than described in policy. The repository is `https://github.com/thierrysays/governed-edge-ai` (public). The page is a project showcase on `glossolalie.pro`, not a blog article, and it should read as a senior practitioner's note to peers.
 
 ---
 
@@ -31,448 +50,168 @@ The site uses a strict no-framework stack. Violating any of these will break the
 
 ---
 
-## Page structure
+## The argument the page has to carry
 
-Use the following section order, mirroring the `frameworks.html` page layout:
+One sentence: **governance controls that only exist in a document are not controls, and this rig is what it takes to make three of them real.**
 
-1. `<head>` with title, description, canonical, og tags, CSS links
-2. `<header class="site-nav">`: copy from existing page
-3. `<main>`
-   - `<section class="page-header">` (hero / title)
-   - `<section class="section section--light">` (project summary)
-   - `<section class="section section--dark">` (architecture)
-   - `<section class="section section--light">` (build steps, numbered 1-8)
-   - `<section class="section section--dark">` (governance controls)
-   - `<section class="section section--light">` (QA baseline and results)
-   - `<section class="section section--dark">` (repository and reuse)
-4. `<footer class="site-footer">`: copy from existing page
+Three, specifically, and the page is stronger if it names them as claims that can be checked rather than as features:
+
+1. **Log before act.** No motor command is transmitted before its audit row exists. Enforced structurally: the audit reference is a return value, and the robot's own firmware rejects any command that does not carry one.
+2. **Witness before act.** The audit chain head reaches a board the governance host does not control before the command frame is written. That is what makes the retained digests evidence rather than a log of a log.
+3. **Enforcement that outlives its enforcer.** The stop is a bistable relay contact in the motor supply. It holds with no current at all, so cutting power to the oversight board does not restore motor power, and it needs no cooperation from the robot because the robot has no pin to read.
+
+The third is new since v1 and it is the most quotable, because it came from finding a real fault: the previous design was a signal wire that released when its own board lost power. A safety control that stops enforcing when its board dies is not a safety control.
 
 ---
 
-## i18n keys to add to `assets/js/i18n.js`
+## Three things worth saying that most project pages do not
 
-Add these keys to BOTH the `fr` and `en` translation objects. Insert them together, after the last existing key of each language object. Never touch existing keys.
+These are the credibility of the page. Keep them.
 
-Use straight apostrophes `\'` (escaped) inside JS single-quoted strings. No curly apostrophes.
+**The project found three real defects in itself, and says so.** A missing frame-length guard that let one hostile message wedge a link permanently. A failed transmission that left the audit log claiming a command had been sent. And the kill line failing open on power loss, which no test could have caught because the test doubles modelled logic and had no power to lose. Two were found by adversarial tests, one by writing the deployment instructions and asking what a reader would actually wire.
+
+**The security tests assert what does not hold.** Anyone with physical access to the oversight cable can forge a message that releases the soft veto, and there is a test that does exactly that. The relay is unaffected, which is the reason there are two paths rather than one. A control whose limits are undocumented is a control nobody can rely on.
+
+**The hardware layer is untested and the page should say so.** Pin timing, the LED matrix, serial throughput and the electrical behaviour of the relay all need the physical rig. Every timing figure in the protocol specification is a design target, not a measurement.
+
+---
+
+## i18n keys
+
+Replace the values of the existing `edge.*` keys with these, and add the new ones. Same rules as v1: escaped straight apostrophes, no curly apostrophes, no HTML entities in `data-i18n`, no em-dashes.
 
 ```js
-// ---- governed-edge-ai page ----
+// ---- governed-edge-ai page, v2 ----
 'edge.meta.title':       { fr: 'Governed Physical AI', en: 'Governed Physical AI' },
-'edge.meta.desc':        { fr: 'Etude de cas : gouvernance IA embarquee sur trois cartes Arduino pour moins de 200 EUR', en: 'Case study: AI governance on three Arduino boards for under EUR 200' },
+'edge.meta.desc':        { fr: 'Etude de cas : controles de gouvernance IA appliques dans le circuit, sur cinq cartes Arduino', en: 'Case study: AI governance controls enforced in circuitry, across five Arduino boards' },
 'edge.hero.title':       { fr: 'Governed Physical AI', en: 'Governed Physical AI' },
-'edge.hero.sub':         { fr: 'Peut-on implementer les controles requis par l\'AI Act sur du materiel embarque grand public ? Cette etude de cas repond oui.', en: 'Can EU AI Act controls be implemented on consumer embedded hardware? This case study answers yes.' },
+'edge.hero.sub':         { fr: 'Un controle de gouvernance qui n\'existe que dans un document n\'est pas un controle. Voici ce qu\'il faut pour en rendre trois reels.', en: 'A governance control that exists only in a document is not a control. This is what it takes to make three of them real.' },
 'edge.hero.label':       { fr: 'Etude de cas', en: 'Case study' },
+
 'edge.summary.h2':       { fr: 'De quoi s\'agit-il ?', en: 'What is this?' },
-'edge.summary.p1':       { fr: 'Trois cartes Arduino connectees forment un robot mobile gouverne : une camera de perception, un filtre de gouvernance avec journal d\'audit, et un microcontroleur physique. Chaque commande moteur est tracee dans une base SQLite avant d\'etre transmise. Aucune commande ne peut contourner l\'audit.', en: 'Three connected Arduino boards form a governed mobile robot: a perception camera, a governance filter with audit log, and a physical microcontroller. Every motor command is recorded in a SQLite database before transmission. No command can bypass the audit.' },
-'edge.summary.p2':       { fr: 'Le code est open source, les tests sont executes en CI sans materiel physique, et la couverture de code depasse 95%. Le projet peut etre reproduit pour moins de 200 EUR.', en: 'The code is open source, tests run in CI without physical hardware, and code coverage exceeds 95%. The project can be reproduced for under EUR 200.' },
-'edge.summary.cost':     { fr: 'Cout du materiel', en: 'Hardware cost' },
-'edge.summary.costval':  { fr: 'Moins de 200 EUR', en: 'Under EUR 200' },
+'edge.summary.p1':       { fr: 'Cinq cartes Arduino, une tache chacune. Une observe le monde, une decide et journalise, une est le robot gouverne, une arbitre la securite depuis l\'exterieur de la chaine de commande, une sert de console hors bande. Aucune commande moteur n\'est transmise avant l\'ecriture de son entree d\'audit, et aucun logiciel ne peut retablir l\'alimentation moteur une fois que l\'arbitre a ouvert le contact.', en: 'Five Arduino boards, one job each. One watches the world, one decides and journals, one is the governed robot, one arbitrates safety from outside the command chain, one is an out-of-band console. No motor command is transmitted before its audit entry is written, and no software anywhere can restore motor power once the arbiter has opened the contact.' },
+'edge.summary.p2':       { fr: 'Le code est open source sous Apache 2.0. La suite complete s\'execute sans materiel physique : les doublures sont de vraies implementations des machines d\'etat, pilotees par pseudo-terminaux, donc le chemin exercice en CI est celui qui tourne sur le banc.', en: 'The code is open source under Apache 2.0. The full suite runs with no physical hardware: the test doubles are real implementations of the state machines driven over pseudo-terminals, so the path exercised in CI is the one that runs on the rig.' },
 'edge.summary.boards':   { fr: 'Cartes', en: 'Boards' },
-'edge.summary.boardsval':{ fr: '3 Arduino', en: '3 Arduino' },
+'edge.summary.boardsval':{ fr: '5 Arduino, une tache chacune', en: '5 Arduino, one job each' },
 'edge.summary.tests':    { fr: 'Tests automatises', en: 'Automated tests' },
-'edge.summary.testsval': { fr: '241 tests, 95.76% couverture', en: '241 tests, 95.76% coverage' },
-'edge.arch.h2':          { fr: 'Architecture trois cartes', en: 'Three-board architecture' },
-'edge.arch.p1':          { fr: 'Le flux de donnees est unidirectionnel et ordonne : la perception ne commande jamais directement l\'actuateur. Chaque couche a une responsabilite unique et ne depend pas des couches en aval.', en: 'The data flow is unidirectional and ordered: perception never commands the actuator directly. Each layer has a single responsibility and does not depend on downstream layers.' },
-'edge.arch.uno':         { fr: 'Arduino UNO Q 4GB', en: 'Arduino UNO Q 4GB' },
-'edge.arch.uno.role':    { fr: 'Perception : capture camera V4L2, inference YOLO-X / MediaPipe / PoseNet, envoi des detections via TCP', en: 'Perception: V4L2 camera capture, YOLO-X / MediaPipe / PoseNet inference, sends detections via TCP' },
+'edge.summary.testsval': { fr: '703 tests, 100% de couverture de ligne', en: '703 tests, 100% line coverage' },
+'edge.summary.enforce':  { fr: 'Application physique', en: 'Physical enforcement' },
+'edge.summary.enforceval':{ fr: 'Relais bistable dans l\'alimentation moteur', en: 'Bistable relay in the motor supply' },
+
+'edge.arch.h2':          { fr: 'Cinq cartes, une tache chacune', en: 'Five boards, one job each' },
+'edge.arch.p1':          { fr: 'La regle qui organise le tout : aucune carte ne decide et n\'applique a la fois. Cela se verifie en regardant le cablage, pas en lisant une politique.', en: 'The rule that organises all of it: no board both decides and enforces. That is checkable by looking at the wiring, not by reading a policy.' },
+'edge.arch.unoq':        { fr: 'Arduino UNO Q 4GB', en: 'Arduino UNO Q 4GB' },
+'edge.arch.unoq.role':   { fr: 'Temoin : seconde observation, modele independant. Un desaccord force un HALT. Le temoin peut arreter, jamais demarrer.', en: 'Witness: a second observation from an independent model. Disagreement forces a HALT. The witness can stop, never start.' },
 'edge.arch.ventuno':     { fr: 'Arduino VENTUNO Q', en: 'Arduino VENTUNO Q' },
-'edge.arch.ventuno.role':{ fr: 'Gouvernance : filtre de confiance, journal d\'audit SQLite (log-before-act), encodage IPC, envoi des commandes via USB-C serie', en: 'Governance: confidence filter, SQLite audit log (log-before-act), IPC encoding, sends commands via USB-C serial' },
+'edge.arch.ventuno.role':{ fr: 'Chemin de decision, explicitement revocable : perception, filtre de gouvernance, journal d\'audit SQLite en chaine SHA-256.', en: 'The decision path, explicitly revocable: perception, governance filter, SQLite audit journal in a SHA-256 chain.' },
 'edge.arch.alvik':       { fr: 'Arduino Alvik', en: 'Arduino Alvik' },
-'edge.arch.alvik.role':  { fr: 'Corps physique : deuxieme couche de gouvernance firmware, commandes moteur, kill switch materiel, ACK/REJECT retourne', en: 'Physical body: second firmware governance layer, motor commands, hardware kill switch, ACK/REJECT returned' },
-'edge.arch.proto':       { fr: 'Protocole IPC', en: 'IPC protocol' },
-'edge.arch.proto.val':   { fr: 'Binaire CRC-16/CCITT sur UART serie, 8 types de message, max 261 octets', en: 'Binary CRC-16/CCITT over serial UART, 8 message types, max 261 bytes' },
-'edge.steps.h2':         { fr: 'Les 8 etapes de construction', en: '8 build steps' },
-'edge.steps.intro':      { fr: 'Le projet est construit par increments tests. Chaque etape produit du code fonctionnel avec des tests passants avant de passer a la suivante.', en: 'The project is built in tested increments. Each step produces working code with passing tests before moving to the next.' },
-'edge.step1.title':      { fr: 'Etape 1 : Protocole IPC et codec binaire', en: 'Step 1: IPC protocol and binary codec' },
-'edge.step1.body':       { fr: 'Definition du format de trame binaire (CRC-16, little-endian, 8 types). Codec Python encode/decode. 45 tests. Base commune a toutes les couches.', en: 'Binary frame format defined (CRC-16, little-endian, 8 types). Python encode/decode codec. 45 tests. Shared base for all layers.' },
-'edge.step2.title':      { fr: 'Etape 2 : Journal d\'audit SQLite', en: 'Step 2: SQLite audit log' },
-'edge.step2.body':       { fr: 'Schema SQLite avec contraintes CHECK sur detection_type. AuditLogger thread-safe avec WAL. 45 tests. Invariant log-before-act etabli.', en: 'SQLite schema with CHECK constraints on detection_type. Thread-safe AuditLogger with WAL. 45 tests. Log-before-act invariant established.' },
-'edge.step3.title':      { fr: 'Etape 3 : Heartbeat et supervision', en: 'Step 3: Heartbeat and supervision' },
-'edge.step3.body':       { fr: 'HeartbeatMonitor avec watchdog 500ms. HaltNotify automatique si le canal se coupe. Tests de liveness et de timeout.', en: 'HeartbeatMonitor with 500ms watchdog. Automatic HaltNotify if channel drops. Liveness and timeout tests.' },
-'edge.step4.title':      { fr: 'Etape 4 : Pair STM32H5 simule', en: 'Step 4: Simulated STM32H5 peer' },
-'edge.step4.body':       { fr: 'MockSTM32H5 sur pseudo-terminal pty. Machine d\'etat ARMED / BUSY / HALTED / FAULT. Cinq priorites de rejet dans l\'ordre exact du firmware.', en: 'MockSTM32H5 on pty pseudo-terminal. ARMED / BUSY / HALTED / FAULT state machine. Five rejection priorities in exact firmware order.' },
-'edge.step5.title':      { fr: 'Etape 5 : Interface de perception', en: 'Step 5: Perception interface' },
-'edge.step5.body':       { fr: 'DetectionResult frozen dataclass. PerceptionPipeline ABC. Backends stub : StubObjectDetector, StubGestureRecognizer, StubPoseEstimator, NullPipeline. 46 tests.', en: 'DetectionResult frozen dataclass. PerceptionPipeline ABC. Stub backends: StubObjectDetector, StubGestureRecognizer, StubPoseEstimator, NullPipeline. 46 tests.' },
-'edge.step6.title':      { fr: 'Etape 6 : Filtre de gouvernance', en: 'Step 6: Governance filter' },
-'edge.step6.body':       { fr: 'GovernanceFilter : seuil de confiance 0.70, log-before-act, une commande par trame, fallback HALT sur label inconnu. 36 tests + 7 smoke tests.', en: 'GovernanceFilter: 0.70 confidence threshold, log-before-act, one command per frame, HALT fallback on unknown label. 36 tests plus 7 smoke tests.' },
-'edge.step7.title':      { fr: 'Etape 7 : Firmware Alvik (MicroPython)', en: 'Step 7: Alvik firmware (MicroPython)' },
-'edge.step7.body':       { fr: 'Codec IPC MicroPython testable sous CPython. Quatre portes de gouvernance firmware : audit_ref, kill switch, seuil confiance float32, action valide. Commandes moteur via arduino_alvik.', en: 'MicroPython IPC codec testable under CPython. Four firmware governance gates: audit_ref, kill switch, float32 confidence threshold, valid action. Motor commands via arduino_alvik.' },
-'edge.step8.title':      { fr: 'Etape 8 : Services UNO Q et VENTUNO Q', en: 'Step 8: UNO Q and VENTUNO Q services' },
-'edge.step8.body':       { fr: 'PerceptionService (UNO Q) : capture multi-backend avec fallback stub. GovernanceService (VENTUNO Q) : reception TCP, filtre, dispatch IPC. Transport JSON prefixe par longueur sur TCP.', en: 'PerceptionService (UNO Q): multi-backend capture with stub fallback. GovernanceService (VENTUNO Q): TCP receive, filter, IPC dispatch. Length-prefixed JSON over TCP transport.' },
+'edge.arch.alvik.role':  { fr: 'Corps gouverne : execute, et refuse toute commande sans reference d\'audit valide. Ses moteurs sont alimentes a travers le contact du relais.', en: 'The governed body: executes, and refuses any command without a valid audit reference. Its motors are powered through the relay contact.' },
+'edge.arch.r4':          { fr: 'Arduino UNO R4 WiFi', en: 'Arduino UNO R4 WiFi' },
+'edge.arch.r4.role':     { fr: 'Arbitre de securite, hors de la chaine de commande : bouton d\'arret, chien de garde, 64 empreintes d\'audit conservees hors hote, et le relais.', en: 'Safety arbiter, outside the command chain: stop button, watchdog, 64 audit digests retained off-host, and the relay.' },
+'edge.arch.nesso':       { fr: 'Arduino Nesso N1', en: 'Arduino Nesso N1' },
+'edge.arch.nesso.role':  { fr: 'Console hors bande : verdicts vers un operateur ailleurs, levee de HALT signee en retour. Concu, pas encore ecrit.', en: 'Out-of-band console: verdicts to an operator elsewhere, a signed HALT lift back. Designed, not yet written.' },
+'edge.arch.least':       { fr: 'Pourquoi l\'arbitre est la carte la moins capable', en: 'Why the arbiter is the least capable board' },
+'edge.arch.least.val':   { fr: 'Quelques centaines de lignes de C++, sans ordonnanceur, sans systeme de fichiers, sans pile reseau par defaut. Assez court pour etre lu d\'une traite, ce qui est exactement ce qu\'on attend d\'un superviseur.', en: 'A few hundred lines of C++ with no scheduler, no filesystem and no network stack by default. Short enough to read in one sitting, which is what a supervisor should be.' },
+
+'edge.latch.h2':         { fr: 'L\'arret est un contact, pas un message', en: 'The stop is a contact, not a message' },
+'edge.latch.p1':         { fr: 'La version precedente utilisait un fil de signal de l\'arbitre vers une broche du robot. Elle avait deux defauts. Elle lachait quand l\'arbitre perdait son alimentation, ce qui est la mauvaise direction pour un organe de securite. Et elle ne fonctionnait que parce que le firmware du robot choisissait de lire cette broche : un module de gouvernance accroche au composant gouverne.', en: 'The previous version used a signal wire from the arbiter into a pin on the robot. It had two faults. It released when the arbiter lost power, which is the wrong direction for a safety control. And it worked only because the robot\'s firmware chose to read that pin: a governance module bolted onto the governed component.' },
+'edge.latch.p2':         { fr: 'Un contact bistable dans l\'alimentation moteur n\'a ni l\'un ni l\'autre. Il conserve sa position sans aucun courant, donc il survit a une coupure sur n\'importe quelle carte du banc, et il est dans l\'alimentation, donc le robot n\'a rien a accepter.', en: 'A bistable contact in the motor supply has neither fault. It holds position with no current at all, so it survives a power cut at any board in the rig, and it is in the supply, so the robot has nothing to agree to.' },
+'edge.latch.p3':         { fr: 'Le contact est relu en permanence, et jamais suppose. Deux canaux optocouples cables en antivalence : un desaccord, une rupture de fil ou une batterie a plat donnent INCONNU, et rien n\'arrondit INCONNU en isolation. Un controle ne doit jamais revendiquer une securite qu\'il n\'a pas observee.', en: 'The contact is read back continuously, never assumed. Two opto-isolated channels wired antivalent: a disagreement, a broken wire or a flat battery all give UNKNOWN, and nothing rounds UNKNOWN up to isolation. A control must never claim a safety it has not observed.' },
+
 'edge.gov.h2':           { fr: 'Controles de gouvernance implementes', en: 'Governance controls implemented' },
-'edge.gov.intro':        { fr: 'Six invariants de securite sont appliques en code, pas en processus. Aucun d\'entre eux ne peut etre contourne par un bug applicatif.', en: 'Six safety invariants are enforced in code, not process. None can be bypassed by an application bug.' },
-'edge.gov.g1':           { fr: 'Log-before-act : l\'audit_ref SQLite est obtenu avant toute transmission de CommandRequest. Echec de journalisation = aucune commande envoyee.', en: 'Log-before-act: SQLite audit_ref obtained before any CommandRequest transmission. Logging failure means no command sent.' },
-'edge.gov.g2':           { fr: 'Double couche de confiance : seuil 0.70 float64 cote Linux, seuil 0.70 float32 cote firmware. La valeur exacte 0.70 est attrapee par la seconde couche apres arrondi IEEE 754.', en: 'Dual confidence gate: 0.70 float64 on Linux side, 0.70 float32 on firmware side. Exact value 0.70 is caught by the second layer after IEEE 754 rounding.' },
-'edge.gov.g3':           { fr: 'audit_ref zero interdit : les deux couches rejettent un CommandRequest avec audit_ref == 0. Priorite absolue, verifie avant tout autre test.', en: 'Zero audit_ref rejected: both layers reject a CommandRequest with audit_ref == 0. Absolute priority, checked before any other test.' },
-'edge.gov.g4':           { fr: 'Kill switch materiel : bouton physique sur GPIO, polling 50ms. Declenche l\'etat HALTED qui rejette toutes les commandes suivantes.', en: 'Hardware kill switch: physical button on GPIO, polled every 50ms. Triggers HALTED state, rejecting all subsequent commands.' },
-'edge.gov.g5':           { fr: 'Fallback HALT sur label inconnu : le filtre de gouvernance emet toujours HALT pour un label non repertorie. Le systeme ne peut pas ignorer une detection inconnue.', en: 'HALT fallback on unknown label: governance filter always emits HALT for an unlisted label. The system cannot ignore an unknown detection.' },
-'edge.gov.g6':           { fr: 'Watchdog heartbeat 500ms : si le canal IPC se coupe, HaltNotify est envoye automatiquement avant l\'expiration du watchdog.', en: '500ms heartbeat watchdog: if the IPC channel drops, HaltNotify is sent automatically before the watchdog expires.' },
-'edge.qa.h2':            { fr: 'Qualite et reproductibilite', en: 'Quality and reproducibility' },
-'edge.qa.p1':            { fr: 'Tous les tests s\'executent sans materiel physique. L\'environnement CI reproduit la pile complete : synthese de trames, pty simule, transport TCP en loopback.', en: 'All tests run without physical hardware. The CI environment reproduces the full stack: synthetic frames, simulated pty, loopback TCP transport.' },
-'edge.qa.tests':         { fr: '241 tests automatises', en: '241 automated tests' },
-'edge.qa.cov':           { fr: '95.76% de couverture de code', en: '95.76% code coverage' },
-'edge.qa.linters':       { fr: 'Ruff, mypy strict, bandit SAST, pip-audit CVE', en: 'Ruff, mypy strict, bandit SAST, pip-audit CVE' },
-'edge.qa.ci':            { fr: 'GitHub Actions, aucun materiel requis', en: 'GitHub Actions, no hardware required' },
+'edge.gov.intro':        { fr: 'Chacun est applique en code ou en cablage, et chacun a un test qui le nomme. Les references de cadre sont indicatives : aucun organisme n\'a certifie ce montage.', en: 'Each is enforced in code or in wiring, and each has a test that names it. The framework references are indicative: no body has certified this rig.' },
+'edge.gov.g1':           { fr: 'Journaliser avant d\'agir : la reference d\'audit est obtenue avant toute transmission. Un echec de journalisation signifie aucune commande envoyee, structurellement.', en: 'Log before act: the audit reference is obtained before any transmission. A logging failure means no command sent, structurally.' },
+'edge.gov.g2':           { fr: 'Temoigner avant d\'agir : la tete de chaine SHA-256 atteint une carte que l\'hote de gouvernance ne controle pas, avant l\'ecriture de la trame de commande.', en: 'Witness before act: the SHA-256 chain head reaches a board the governance host does not control, before the command frame is written.' },
+'edge.gov.g3':           { fr: 'Double seuil de confiance : 0.70 en float64 cote Linux, 0.70 en float32 cote firmware, appliques independamment.', en: 'Dual confidence gate: 0.70 float64 on the Linux side, 0.70 float32 on the firmware side, independently enforced.' },
+'edge.gov.g4':           { fr: 'Autorite humaine hors de la pile IA : bouton physique normalement ferme sur l\'arbitre. Il se verrouille, et aucun message du protocole ne le libere.', en: 'Human authority outside the AI stack: a physical normally closed button on the arbiter. It latches, and no protocol message releases it.' },
+'edge.gov.g5':           { fr: 'Application qui survit a celui qui l\'applique : contact bistable dans l\'alimentation moteur, conserve sans courant a travers une coupure sur chaque carte.', en: 'Enforcement that outlives its enforcer: a bistable contact in the motor supply, held with no current through a power cut at every board.' },
+'edge.gov.g6':           { fr: 'Preuve d\'alteration hors hote : 64 empreintes de chaine conservees sur une carte que l\'hote ne controle pas. Reecrire le journal se detecte a la reconciliation.', en: 'Off-host tamper evidence: 64 chain digests retained on a board the host does not control. Rewriting the journal is detected on reconciliation.' },
+'edge.gov.g7':           { fr: 'Fermeture sur perte de supervision : le silence de l\'arbitre compte comme un veto. Un superviseur injoignable n\'est pas un superviseur satisfait.', en: 'Fail closed on loss of oversight: silence from the arbiter counts as a veto. A supervisor that cannot be reached is not a satisfied supervisor.' },
+
+'edge.qa.h2':            { fr: 'Qualite, et ce qui n\'est pas teste', en: 'Quality, and what is not tested' },
+'edge.qa.p1':            { fr: 'Tout s\'execute sans materiel physique. Les doublures sont de vraies implementations des machines d\'etat pilotees par pseudo-terminaux, pas des bouchons : le chemin exercice en CI est celui du banc.', en: 'Everything runs without physical hardware. The test doubles are real implementations of the state machines driven over pseudo-terminals, not stubs: the path exercised in CI is the one on the rig.' },
+'edge.qa.tests':         { fr: '703 tests automatises', en: '703 automated tests' },
+'edge.qa.cov':           { fr: '100% de couverture de ligne sur les deux modules', en: '100% line coverage on both modules' },
+'edge.qa.linters':       { fr: 'Ruff, mypy strict, bandit SAST, pip-audit CVE, tous propres', en: 'Ruff, mypy strict, bandit SAST, pip-audit CVE, all clean' },
+'edge.qa.parity':        { fr: 'Le firmware C++ est compile et confronte au modele Python de reference', en: 'The C++ firmware is compiled and checked against the Python reference model' },
+'edge.qa.p2':            { fr: 'Trois defauts reels ont ete trouves ainsi plutot qu\'en relecture, dont un fil d\'arret qui lachait a la coupure d\'alimentation. Aucun test ne pouvait l\'attraper : les doublures modelisaient une logique, sans alimentation a perdre.', en: 'Three real defects were found this way rather than by review, including a kill line that released on power loss. No test could have caught it: the doubles modelled logic, with no power to lose.' },
+'edge.qa.p3':            { fr: 'Ce qui n\'est pas teste : la couche materielle elle-meme. Chronometrage des broches, matrice LED, debit serie, comportement electrique du relais. Chaque chiffre de temporisation de la specification est une cible de conception, pas une mesure.', en: 'What is not tested: the hardware layer itself. Pin timing, the LED matrix, serial throughput, the electrical behaviour of the relay. Every timing figure in the specification is a design target, not a measurement.' },
+
+'edge.limits.h2':        { fr: 'Ce que ce montage ne resout pas', en: 'What this rig does not solve' },
+'edge.limits.l1':        { fr: 'La chaine d\'audit n\'est pas signee. Elle detecte l\'alteration de lignes deja temoignees, pas la falsification apres compromission de l\'hote. La signature est l\'increment suivant.', en: 'The audit chain is unkeyed. It detects tampering with rows already witnessed, not forgery after a host compromise. Signing is the next increment.' },
+'edge.limits.l2':        { fr: 'Le lien de supervision vaut ce que vaut le cable. Qui peut y ecrire peut forger la levee du veto logiciel, et un test le demontre. Le contact du relais, lui, n\'est atteignable par aucun message.', en: 'The oversight link is worth exactly what the cable is worth. Anyone who can write to it can forge a release of the soft veto, and a test demonstrates it. The relay contact is reachable by no message at all.' },
+'edge.limits.l3':        { fr: 'Le seuil de confiance de 0.70 est un jugement d\'ingenierie. Aucun standard publie ne relie un score de confiance a une probabilite de blessure.', en: 'The 0.70 confidence threshold is an engineering judgment. No published standard maps a confidence score to an injury probability.' },
+'edge.limits.l4':        { fr: 'L\'acces physique au cablage moteur contourne tout. L\'application physique suppose la garde physique du materiel, et le dire vaut mieux que le sous-entendre.', en: 'Physical access to the motor wiring bypasses everything. Physical enforcement assumes physical custody of the rig, and saying so beats implying otherwise.' },
+
 'edge.repo.h2':          { fr: 'Depot et reutilisation', en: 'Repository and reuse' },
-'edge.repo.p1':          { fr: 'Le code est publie sous licence MIT. Chaque couche (codec IPC, journal d\'audit, filtre de gouvernance, firmware MicroPython) peut etre reutilisee independamment dans un autre projet.', en: 'Code is published under the MIT license. Each layer (IPC codec, audit log, governance filter, MicroPython firmware) can be reused independently in another project.' },
+'edge.repo.p1':          { fr: 'Code sous Apache 2.0, fichiers de conception materielle sous CERN OHL-P v2, documentation sous CC BY 4.0. Chaque couche (codec IPC, journal d\'audit, filtre de gouvernance, chaine d\'attestation, pilote de relais) est reutilisable independamment.', en: 'Code under Apache 2.0, hardware design files under CERN OHL-P v2, documentation under CC BY 4.0. Each layer (IPC codec, audit journal, governance filter, attestation chain, relay driver) is independently reusable.' },
 'edge.repo.link':        { fr: 'Voir le depot GitHub', en: 'View GitHub repository' },
-'edge.repo.note':        { fr: 'Documentation d\'architecture complete dans docs/architecture.md', en: 'Full architecture documentation in docs/architecture.md' },
+'edge.repo.note':        { fr: 'Specification complete dans docs/architecture.md, et un guide de deploiement pas a pas depuis zero dans docs/deployment-guide.md', en: 'Full specification in docs/architecture.md, and a step-by-step guide from bare metal in docs/deployment-guide.md' },
 ```
+
+### Keys to remove
+
+`edge.summary.cost` and `edge.summary.costval` go. The cost claim does not survive the five-board rig and there is no honest replacement figure. Remove the corresponding stat block from the HTML rather than leaving an empty tile.
+
+`edge.step1` through `edge.step8`, `edge.steps.h2` and `edge.steps.intro` also go. The eight-step walkthrough was a build diary and it has been overtaken twice. Replace that whole section with the "The stop is a contact, not a message" section (`edge.latch.*`) and the limits section (`edge.limits.*`), both of which say more in less space and neither of which goes stale on the next build step.
 
 ---
 
-## HTML page content
+## HTML changes
 
-Write the following HTML file as `governed-edge-ai.html` at the root of `public_html/`. Use the nav and footer from `frameworks.html` verbatim (fetch the live page to get the exact markup).
+The page structure stays as it is. Three section-level edits:
 
-```html
-<!DOCTYPE html>
-<html lang="fr">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title data-i18n="edge.meta.title">Governed Physical AI</title>
-  <meta name="description" data-i18n="edge.meta.desc" content="">
-  <link rel="canonical" href="https://www.glossolalie.pro/governed-edge-ai.html">
-  <meta property="og:title" data-i18n="edge.meta.title" content="Governed Physical AI">
-  <meta property="og:url" content="https://www.glossolalie.pro/governed-edge-ai.html">
-  <meta property="og:type" content="website">
-  <link rel="icon" href="/assets/img/favicon.ico">
-  <link rel="stylesheet" href="/assets/css/tokens.css?v=4">
-  <link rel="stylesheet" href="/assets/css/main.css?v=4">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap">
-  <style>
-    .edge-board-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-      gap: var(--space-lg);
-      margin-top: var(--space-lg);
-    }
-    .edge-board-card {
-      background: var(--color-ivory);
-      border-radius: var(--radius-md);
-      padding: var(--space-lg);
-      border-top: 3px solid var(--color-teal);
-    }
-    .edge-board-card h3 {
-      color: var(--color-navy);
-      font-size: var(--text-base);
-      font-weight: 600;
-      margin-bottom: var(--space-sm);
-    }
-    .edge-steps-list {
-      counter-reset: step;
-      list-style: none;
-      padding: 0;
-      margin: var(--space-lg) 0 0;
-    }
-    .edge-steps-list li {
-      counter-increment: step;
-      display: grid;
-      grid-template-columns: 2.5rem 1fr;
-      gap: var(--space-md);
-      margin-bottom: var(--space-lg);
-      align-items: start;
-    }
-    .edge-steps-list li::before {
-      content: counter(step);
-      background: var(--color-teal);
-      color: #fff;
-      border-radius: 50%;
-      width: 2.5rem;
-      height: 2.5rem;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-weight: 700;
-      font-size: var(--text-sm);
-      flex-shrink: 0;
-    }
-    .edge-step-title {
-      font-weight: 600;
-      color: var(--color-navy);
-      margin-bottom: var(--space-xs);
-    }
-    .edge-gov-list {
-      list-style: none;
-      padding: 0;
-      margin: var(--space-lg) 0 0;
-    }
-    .edge-gov-list li {
-      padding: var(--space-md) var(--space-lg);
-      border-left: 3px solid var(--color-teal);
-      background: rgba(13,148,136,.06);
-      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-      margin-bottom: var(--space-sm);
-      font-size: var(--text-sm);
-      line-height: 1.6;
-    }
-    .edge-stats-row {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      gap: var(--space-md);
-      margin: var(--space-lg) 0;
-    }
-    .edge-stat {
-      text-align: center;
-      padding: var(--space-lg);
-      background: var(--color-ivory);
-      border-radius: var(--radius-md);
-    }
-    .edge-stat__value {
-      font-size: var(--text-2xl);
-      font-weight: 700;
-      color: var(--color-teal);
-      display: block;
-    }
-    .edge-stat__label {
-      font-size: var(--text-xs);
-      color: var(--color-text-muted);
-      margin-top: var(--space-xs);
-    }
-    .edge-summary-grid {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: var(--space-md);
-      margin: var(--space-lg) 0;
-    }
-    @media (max-width: 640px) {
-      .edge-summary-grid { grid-template-columns: 1fr; }
-    }
-    .edge-summary-item {
-      padding: var(--space-md);
-      border-radius: var(--radius-sm);
-      background: var(--color-ivory);
-      border-top: 2px solid var(--color-teal);
-    }
-    .edge-summary-item dt {
-      font-size: var(--text-xs);
-      color: var(--color-text-muted);
-      text-transform: uppercase;
-      letter-spacing: .05em;
-      margin-bottom: var(--space-xs);
-    }
-    .edge-summary-item dd {
-      font-size: var(--text-sm);
-      font-weight: 600;
-      color: var(--color-navy);
-    }
-  </style>
-</head>
-<body data-page="governed-edge-ai">
+1. **Architecture section**: five board cards instead of three. Keys `edge.arch.unoq`, `edge.arch.ventuno`, `edge.arch.alvik`, `edge.arch.r4`, `edge.arch.nesso` and their `.role` pairs, plus the `edge.arch.least` callout.
+2. **Replace the build-steps section** with two new ones: the latch relay explanation (`edge.latch.*`, on a `section--light`) and the limits (`edge.limits.*`, on a `section--dark`). Limits last but before the repository section: ending on what the project does not do is the tone the rest of the site holds.
+3. **Governance controls**: seven items now, `edge.gov.g1` to `edge.gov.g7`.
 
-  <!-- NAV: copy verbatim from frameworks.html -->
+Everything else, nav, footer, head, script tags, stays exactly as the live page has it. Do not regenerate the file from scratch.
 
-  <main>
+### Text-only diagram for the architecture section
 
-    <!-- HERO -->
-    <section class="page-header">
-      <div class="container">
-        <span class="page-header__label" data-i18n="edge.hero.label">Etude de cas</span>
-        <h1 class="page-header__title" data-i18n="edge.hero.title">Governed Physical AI</h1>
-        <p class="page-header__sub" data-i18n="edge.hero.sub">Peut-on implementer les controles requis par l'AI Act sur du materiel embarque grand public ?</p>
-      </div>
-    </section>
+If the architecture section carries a preformatted diagram, this is the current one. Keep it inside a `<pre>` and do not translate it: it is a wiring diagram, not prose.
 
-    <!-- SUMMARY -->
-    <section class="section section--light">
-      <div class="container">
-        <h2 data-i18n="edge.summary.h2">De quoi s'agit-il ?</h2>
-        <p data-i18n="edge.summary.p1"></p>
-        <p data-i18n="edge.summary.p2"></p>
-        <dl class="edge-summary-grid">
-          <div class="edge-summary-item">
-            <dt data-i18n="edge.summary.cost">Cout du materiel</dt>
-            <dd data-i18n="edge.summary.costval">Moins de 200 EUR</dd>
-          </div>
-          <div class="edge-summary-item">
-            <dt data-i18n="edge.summary.boards">Cartes</dt>
-            <dd data-i18n="edge.summary.boardsval">3 Arduino</dd>
-          </div>
-          <div class="edge-summary-item">
-            <dt data-i18n="edge.summary.tests">Tests automatises</dt>
-            <dd data-i18n="edge.summary.testsval">241 tests, 95.76% couverture</dd>
-          </div>
-        </dl>
-      </div>
-    </section>
-
-    <!-- ARCHITECTURE -->
-    <section class="section section--dark">
-      <div class="container">
-        <h2 data-i18n="edge.arch.h2">Architecture trois cartes</h2>
-        <p data-i18n="edge.arch.p1"></p>
-        <div class="edge-board-grid">
-          <div class="edge-board-card">
-            <h3 data-i18n="edge.arch.uno">Arduino UNO Q 4GB</h3>
-            <p data-i18n="edge.arch.uno.role"></p>
-          </div>
-          <div class="edge-board-card">
-            <h3 data-i18n="edge.arch.ventuno">Arduino VENTUNO Q</h3>
-            <p data-i18n="edge.arch.ventuno.role"></p>
-          </div>
-          <div class="edge-board-card">
-            <h3 data-i18n="edge.arch.alvik">Arduino Alvik</h3>
-            <p data-i18n="edge.arch.alvik.role"></p>
-          </div>
-        </div>
-        <p style="margin-top:var(--space-lg);font-size:var(--text-sm);color:var(--color-text-muted);">
-          <strong data-i18n="edge.arch.proto">Protocole IPC</strong> :
-          <span data-i18n="edge.arch.proto.val">Binaire CRC-16/CCITT sur UART serie, 8 types de message, max 261 octets</span>
-        </p>
-      </div>
-    </section>
-
-    <!-- BUILD STEPS -->
-    <section class="section section--light">
-      <div class="container">
-        <h2 data-i18n="edge.steps.h2">Les 8 etapes de construction</h2>
-        <p data-i18n="edge.steps.intro"></p>
-        <ol class="edge-steps-list">
-          <li>
-            <div>
-              <p class="edge-step-title" data-i18n="edge.step1.title">Etape 1 : Protocole IPC et codec binaire</p>
-              <p data-i18n="edge.step1.body"></p>
-            </div>
-          </li>
-          <li>
-            <div>
-              <p class="edge-step-title" data-i18n="edge.step2.title">Etape 2 : Journal d'audit SQLite</p>
-              <p data-i18n="edge.step2.body"></p>
-            </div>
-          </li>
-          <li>
-            <div>
-              <p class="edge-step-title" data-i18n="edge.step3.title">Etape 3 : Heartbeat et supervision</p>
-              <p data-i18n="edge.step3.body"></p>
-            </div>
-          </li>
-          <li>
-            <div>
-              <p class="edge-step-title" data-i18n="edge.step4.title">Etape 4 : Pair STM32H5 simule</p>
-              <p data-i18n="edge.step4.body"></p>
-            </div>
-          </li>
-          <li>
-            <div>
-              <p class="edge-step-title" data-i18n="edge.step5.title">Etape 5 : Interface de perception</p>
-              <p data-i18n="edge.step5.body"></p>
-            </div>
-          </li>
-          <li>
-            <div>
-              <p class="edge-step-title" data-i18n="edge.step6.title">Etape 6 : Filtre de gouvernance</p>
-              <p data-i18n="edge.step6.body"></p>
-            </div>
-          </li>
-          <li>
-            <div>
-              <p class="edge-step-title" data-i18n="edge.step7.title">Etape 7 : Firmware Alvik (MicroPython)</p>
-              <p data-i18n="edge.step7.body"></p>
-            </div>
-          </li>
-          <li>
-            <div>
-              <p class="edge-step-title" data-i18n="edge.step8.title">Etape 8 : Services UNO Q et VENTUNO Q</p>
-              <p data-i18n="edge.step8.body"></p>
-            </div>
-          </li>
-        </ol>
-      </div>
-    </section>
-
-    <!-- GOVERNANCE CONTROLS -->
-    <section class="section section--dark">
-      <div class="container">
-        <h2 data-i18n="edge.gov.h2">Controles de gouvernance implementes</h2>
-        <p data-i18n="edge.gov.intro"></p>
-        <ul class="edge-gov-list">
-          <li data-i18n="edge.gov.g1"></li>
-          <li data-i18n="edge.gov.g2"></li>
-          <li data-i18n="edge.gov.g3"></li>
-          <li data-i18n="edge.gov.g4"></li>
-          <li data-i18n="edge.gov.g5"></li>
-          <li data-i18n="edge.gov.g6"></li>
-        </ul>
-      </div>
-    </section>
-
-    <!-- QA BASELINE -->
-    <section class="section section--light">
-      <div class="container">
-        <h2 data-i18n="edge.qa.h2">Qualite et reproductibilite</h2>
-        <p data-i18n="edge.qa.p1"></p>
-        <div class="edge-stats-row">
-          <div class="edge-stat">
-            <span class="edge-stat__value" data-i18n="edge.qa.tests">241 tests automatises</span>
-          </div>
-          <div class="edge-stat">
-            <span class="edge-stat__value" data-i18n="edge.qa.cov">95.76%</span>
-          </div>
-          <div class="edge-stat">
-            <span class="edge-stat__value" data-i18n="edge.qa.linters">Ruff / mypy / bandit</span>
-          </div>
-          <div class="edge-stat">
-            <span class="edge-stat__value" data-i18n="edge.qa.ci">CI sans materiel</span>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- REPOSITORY -->
-    <section class="section section--dark">
-      <div class="container">
-        <h2 data-i18n="edge.repo.h2">Depot et reutilisation</h2>
-        <p data-i18n="edge.repo.p1"></p>
-        <p>
-          <a href="https://github.com/thierrysays/governed-edge-ai"
-             target="_blank" rel="noopener"
-             class="btn btn--teal" data-i18n="edge.repo.link">Voir le depot GitHub</a>
-        </p>
-        <p style="margin-top:var(--space-md);font-size:var(--text-sm);color:var(--color-text-muted);"
-           data-i18n="edge.repo.note"></p>
-      </div>
-    </section>
-
-  </main>
-
-  <!-- FOOTER: copy verbatim from frameworks.html -->
-
-  <script src="/assets/js/i18n.js?v=4"></script>
-  <script src="/assets/js/main.js?v=4" defer></script>
-</body>
-</html>
 ```
-
----
+                       Nesso N1
+                       out-of-band console
+                             |
+UNO Q 4GB  ----------> VENTUNO Q --------------> Alvik
+witness                decision path, revocable   governed body
+independent model      audit journal              motors
+disagreement                 ^                        ^
+forces HALT     heartbeat +  |  reports only          | motor +V
+                digests      |                        |
+                        UNO R4 WiFi                   |
+                        safety arbiter                |
+                        64 retained digests           |
+                             | Qwiic I2C              |
+                             +--> Latch Relay --------+
+                                  bistable contact
+                                  + antivalent sense
+```
 
 ## Checklist before publishing
 
-- [ ] Fetch `https://www.glossolalie.pro/frameworks.html` to extract the exact nav and footer markup; paste verbatim into `governed-edge-ai.html`
-- [ ] Add all `edge.*` i18n keys to both `fr` and `en` objects in `assets/js/i18n.js`; verify with `node --check assets/js/i18n.js`
+- [ ] Fetch the live `governed-edge-ai.html` and edit it in place. Do not regenerate the file: the nav, footer and head are correct as they are.
+- [ ] Update the `edge.*` values in both the `fr` and `en` objects in `assets/js/i18n.js`; remove `edge.summary.cost`, `edge.summary.costval` and the whole `edge.step1` to `edge.step8` block along with `edge.steps.h2` and `edge.steps.intro`; verify with `node --check assets/js/i18n.js`
+- [ ] Confirm every key used in the HTML exists in both language objects, and that no removed key is still referenced
 - [ ] Confirm no `type="module"` in any `<script>` tag in this file
 - [ ] Confirm no `&amp;`, `&gt;`, or similar HTML entities inside any `data-i18n` value
-- [ ] Confirm no em-dashes anywhere (search for `—`)
-- [ ] Bump CSS/JS version to `?v=5` if any JS or CSS file was modified; otherwise keep `?v=4`
-- [ ] Add a nav link for the new page (check if the existing nav has a "Projets" or similar section where it should appear, or add it after the frameworks link)
+- [ ] Confirm no em-dashes anywhere (search for the character itself)
+- [ ] Confirm the page no longer states a hardware cost figure anywhere, including in meta description and og tags
+- [ ] Search the whole site for the old figures and fix any that appear on other pages: "three boards", "trois cartes", "241", "95.76", "MIT"
+- [ ] Bump CSS/JS version to the next `?v=` if `i18n.js` was modified, across every page that loads it
 - [ ] Run `php -l` on any PHP file if it was touched
 - [ ] Build and deploy the ZIP: `cd public_html && find . -type f ! -path "./.git/*" | sort | zip /tmp/deploy.zip -@` then verify `unzip -l /tmp/deploy.zip | head` shows `.htaccess` at the root, not inside a subfolder
 
 ---
 
-## Nav link addition
+## Nav
 
-In the existing `site-nav` markup (in every HTML file that contains it), add a nav item for this new page. Check the nav structure first. The link text should be bilingual:
+The nav entry already exists and does not change:
 
 ```html
 <a href="/governed-edge-ai.html" data-i18n="nav.edge">Governed Physical AI</a>
 ```
 
-Add to `i18n.js` in both language objects:
-
-```js
-'nav.edge': { fr: 'Governed Physical AI', en: 'Governed Physical AI' },
-```
-
-(The title is the same in both languages: it is a proper name / project title, not a translation.)
+The title is the same in both languages: it is a project name, not a translation.

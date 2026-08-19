@@ -17,16 +17,29 @@
  * Two enforcement paths, and this is the only board wired to both:
  *   1. Soft veto over the serial link. The governance filter stops
  *      transmitting CommandRequest frames.
- *   2. Hard line: KILL_LINE_PIN drives the Alvik kill-switch input. The
- *      Alvik firmware rejects every command while that pin reads active,
- *      so the veto holds even if the VENTUNO Q ignores the soft one.
+ *   2. Physical: a bistable latch relay on this board's Qwiic bus, whose
+ *      contact sits in series with the Alvik's motor supply. It holds even
+ *      if the VENTUNO Q ignores the soft veto, because there is no motor
+ *      supply left to ignore it with.
+ *
+ * This replaces an earlier GPIO line into the Alvik's kill-switch pin. That
+ * line failed open when this board lost power, and it worked only because
+ * the Alvik's firmware chose to read the pin: a governance module hanging
+ * off the governed component. The relay has neither fault. Its contact is
+ * bistable, so it holds with no coil current through a power cut and a Linux
+ * reboot, and it is in the supply, so the Alvik has nothing to agree to.
  *
  * Wiring
- *   D2   OVERRIDE_BUTTON_PIN  momentary NC button to GND, INPUT_PULLUP.
- *                             Normally closed: a cut wire reads as pressed.
- *   D3   KILL_LINE_PIN        output to the Alvik kill-switch input (D4 on
- *                             the Alvik, active low). Common ground required.
- *   USB-C                     serial link to the VENTUNO Q at 921600 baud.
+ *   D2     OVERRIDE_BUTTON_PIN  momentary NC button to GND, INPUT_PULLUP.
+ *                               Normally closed: a cut wire reads as pressed.
+ *   D4     CLEAR_BUTTON_PIN     momentary NO button to GND, INPUT_PULLUP.
+ *   D3     LATCH_SENSE_A_PIN    opto across the relay contact: pulled low only
+ *                               while the contact is open.
+ *   D5     LATCH_SENSE_B_PIN    opto across the motor rail: pulled low only
+ *                               while the rail is live. Antivalent with A;
+ *                               see latch_io_read_sense below.
+ *   Qwiic  Modulino Latch Relay at I2C 0x2A, and the evidence modules.
+ *   USB-C                       serial to the VENTUNO Q at 921600 baud.
  *
  * The state machine lives in supervisor_state.cpp, which is a port of
  * linux-stack/oversight/mock_supervisor.py. That Python model is the
@@ -38,8 +51,11 @@
  * Governed Edge AI - Glossolalie Advisory. Apache 2.0.
  */
 
+#include <Wire.h>
+
 #include "Arduino_LED_Matrix.h"
 #include "ipc_frame.h"
+#include "latch.h"
 #include "supervisor_state.h"
 
 /* Set to 1 and fill in arduino_secrets.h to expose the read-only status
@@ -54,7 +70,8 @@ static WiFiServer console(8021);
 #endif
 
 static const uint8_t OVERRIDE_BUTTON_PIN = 2;
-static const uint8_t KILL_LINE_PIN       = 3;
+static const uint8_t LATCH_SENSE_A_PIN   = 3;  /* low while the contact is open */
+static const uint8_t LATCH_SENSE_B_PIN   = 5;  /* low while the motor rail is live */
 static const uint8_t CLEAR_BUTTON_PIN    = 4;  /* momentary NO to GND */
 
 static const unsigned long LINK_BAUD    = 921600;
@@ -64,6 +81,7 @@ static const uint32_t ANNUNCIATOR_MS    = 200;
 static SupervisorState state;
 static IpcParser parser;
 static ArduinoLEDMatrix matrix;
+static Latch latch;
 
 static uint32_t last_debounce_ms = 0;
 static bool     debounced_button = false;
@@ -123,11 +141,24 @@ static const uint8_t GLYPH_ATTEST[8][12] = {
   {1,1,0,0,0,0,0,0,0,0,1,1},
 };
 
+/* Split bar: the relay is not where it was told to be. */
+static const uint8_t GLYPH_LATCH[8][12] = {
+  {1,1,1,1,1,0,0,1,1,1,1,1},
+  {1,0,0,0,1,0,0,1,0,0,0,1},
+  {1,0,0,0,1,0,0,1,0,0,0,1},
+  {1,1,1,1,1,0,0,1,1,1,1,1},
+  {0,0,0,0,0,0,0,0,0,0,0,0},
+  {1,1,1,1,1,0,0,1,1,1,1,1},
+  {1,0,0,0,1,0,0,1,0,0,0,1},
+  {1,1,1,1,1,0,0,1,1,1,1,1},
+};
+
 static void draw(Annunciator glyph) {
   switch (glyph) {
     case ANN_OVERRIDE: matrix.renderBitmap(GLYPH_OVERRIDE, 8, 12); break;
     case ANN_STALE:    matrix.renderBitmap(GLYPH_STALE,    8, 12); break;
     case ANN_ATTEST:   matrix.renderBitmap(GLYPH_ATTEST,   8, 12); break;
+    case ANN_LATCH:    matrix.renderBitmap(GLYPH_LATCH,    8, 12); break;
     default:           matrix.renderBitmap(GLYPH_WATCHING, 8, 12); break;
   }
 }
@@ -161,11 +192,94 @@ static void send_attest_ack(uint64_t audit_ref, uint8_t verdict) {
   Serial.flush();
 }
 
-/* The kill line is driven from the latch on every pass, not toggled on
- * transitions. A missed transition would otherwise leave the actuator
- * enabled while the annunciator says otherwise. */
-static void drive_kill_line() {
-  digitalWrite(KILL_LINE_PIN, supervisor_kill_line(&state) ? LOW : HIGH);
+/* ------------------------------------------------------------------ */
+/* Latch relay                                                         */
+/* ------------------------------------------------------------------ */
+
+/* SET and RESET are single-register writes to the module, held for the
+ * specified pulse. The contact is bistable: once moved it stays without
+ * current, which is the property the GPIO line this replaces did not have. */
+static void latch_io_pulse_open(void *) {
+  Wire.beginTransmission(LATCH_I2C_ADDR);
+  Wire.write(0x01);            /* SET: open the contact, cut motor supply */
+  Wire.endTransmission();
+  delay(LATCH_PULSE_MS);
+}
+
+static void latch_io_pulse_close(void *) {
+  Wire.beginTransmission(LATCH_I2C_ADDR);
+  Wire.write(0x00);            /* RESET: close the contact */
+  Wire.endTransmission();
+  delay(LATCH_PULSE_MS);
+}
+
+/* What the module's own MCU believes. Treated as a cross-check only: it may
+ * be echoing the last command rather than observing the contact. */
+static LatchPosition latch_io_read_register(void *) {
+  Wire.requestFrom(LATCH_I2C_ADDR, 1);
+  if (!Wire.available()) {
+    return LATCH_UNKNOWN;
+  }
+  return Wire.read() ? LATCH_OPEN : LATCH_CLOSED;
+}
+
+/* The sense circuit on the contact. This is the source of truth.
+ *
+ * Two channels, wired antivalent, both INPUT_PULLUP and both active low.
+ * Channel A is an opto across the contact, so its LED sees the full battery
+ * only while the contact is open. Channel B is an opto across the motor rail,
+ * so its LED is lit only while the rail is live. In normal operation exactly
+ * one of them conducts.
+ *
+ * A single channel would not do. Whichever way one pin is wired, one of its
+ * two readings is also what a cut wire produces, so one contact position
+ * becomes indistinguishable from a fault. If that position is OPEN, a broken
+ * sense wire reports the motors isolated when nothing at all is known about
+ * them, which is the one claim this board must never make. With the pair,
+ * a cut harness, a dead opto or a flat battery leaves both channels dark, the
+ * readings stop being complementary, and the answer is UNKNOWN. Nothing
+ * upstream rounds UNKNOWN up to isolation.
+ *
+ * Only the energised channel is under test at any instant, so a break in the
+ * dark one stays latent until the contact next moves. That is one of the
+ * reasons every command reads back and the pair is polled rather than waiting
+ * for an edge. */
+static LatchPosition latch_io_read_sense(void *) {
+  const bool open_channel   = digitalRead(LATCH_SENSE_A_PIN) == LOW;
+  const bool closed_channel = digitalRead(LATCH_SENSE_B_PIN) == LOW;
+  if (open_channel && !closed_channel) {
+    return LATCH_OPEN;
+  }
+  if (closed_channel && !open_channel) {
+    return LATCH_CLOSED;
+  }
+  return LATCH_UNKNOWN;
+}
+
+/* Drive the relay from the latched state on every pass rather than on
+ * transitions. A missed transition would otherwise leave the motors powered
+ * while the annunciator said otherwise. Idempotent by construction. */
+static void drive_latch(uint32_t now_ms) {
+  if (supervisor_kill_line(&state)) {
+    if (latch.commanded != LATCH_OPEN) {
+      latch_enforce_halt(&latch, now_ms);
+    }
+  } else if (latch.commanded != LATCH_CLOSED) {
+    latch_permit(&latch, now_ms);
+  }
+
+  /* Poll the contact back at a fixed cadence. A relay that silently failed
+   * to move raises no edge, so only a poll finds it. A disagreement between
+   * commanded, reported and observed latches an override: a safety contact
+   * that is not where it was told to be is a fault in either direction. */
+  LatchReading reading;
+  if (latch_poll_if_due(&latch, now_ms, &reading)
+      && latch.commanded != LATCH_UNKNOWN
+      && !latch_reading_agrees(&reading)) {
+    if (supervisor_assert_override(&state, OVR_LATCH_MISMATCH)) {
+      send_override_assert(OVR_LATCH_MISMATCH);
+    }
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -254,18 +368,30 @@ static void console_poll(uint32_t now_ms) {
 void setup() {
   pinMode(OVERRIDE_BUTTON_PIN, INPUT_PULLUP);
   pinMode(CLEAR_BUTTON_PIN, INPUT_PULLUP);
-  pinMode(KILL_LINE_PIN, OUTPUT);
+  pinMode(LATCH_SENSE_A_PIN, INPUT_PULLUP);
+  pinMode(LATCH_SENSE_B_PIN, INPUT_PULLUP);
 
-  /* Hold the kill line before anything else, and keep holding it: the state
-   * machine reports the line asserted until the first heartbeat arrives, so
-   * the rig cannot move before the governance tier has said anything. No
-   * latch is involved and no arming step is needed. */
-  digitalWrite(KILL_LINE_PIN, LOW);
-
+  Wire.begin();
   matrix.begin();
   Serial.begin(LINK_BAUD);
 
   supervisor_init(&state, SUP_HEARTBEAT_TIMEOUT_MS, millis());
+
+  LatchIo io;
+  io.pulse_open = latch_io_pulse_open;
+  io.pulse_close = latch_io_pulse_close;
+  io.read_register = latch_io_read_register;
+  io.read_sense = latch_io_read_sense;
+  io.ctx = nullptr;
+  latch_init(&latch, io);
+
+  /* Isolate the motors before anything else. The contact is bistable, so it
+   * comes up wherever it was left and this board must not assume that is
+   * where it wants it. The state machine keeps it open until the first
+   * heartbeat arrives: a governance tier that has said nothing has not
+   * earned the authority to move a robot. */
+  latch_enforce_halt(&latch, millis());
+
   ipc_parser_reset(&parser);
   draw(supervisor_annunciator(&state));
 
@@ -300,7 +426,7 @@ void loop() {
     send_override_assert(OVR_GOVERNANCE_HEARTBEAT_LOST);
   }
 
-  drive_kill_line();
+  drive_latch(now_ms);
 
 #if ENABLE_WIFI_CONSOLE
   console_poll(now_ms);

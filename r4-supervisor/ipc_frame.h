@@ -41,6 +41,7 @@
 #define OVR_GOVERNANCE_HEARTBEAT_LOST 0x02
 #define OVR_ATTESTATION_MISMATCH      0x03
 #define OVR_REMOTE_CONSOLE            0x04
+#define OVR_LATCH_MISMATCH            0x05
 
 /* AttestVerdict */
 #define ATT_CHAIN_OK    0x00

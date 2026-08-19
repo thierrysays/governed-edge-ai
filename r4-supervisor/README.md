@@ -6,7 +6,7 @@ This board sits outside the perception to governance to actuation chain. It
 runs no model, holds no camera and issues no command. Its only job is to watch
 the governance tier and to be able to stop it.
 
-## Why a fourth board
+## Why a separate board
 
 Before the R4 was added, the human override lived inside the system it was
 meant to override. The gesture HALT travelled through the AI perception
@@ -19,6 +19,14 @@ its own link, and nothing the governance tier can send to it clears an
 override. An oversight function that its subject can switch off is not an
 oversight function.
 
+The same rule was applied a second time, and it moved the enforcement. The
+original hard path was a GPIO line from this board into the Alvik's kill-switch
+pin: a governance module hanging off the governed component, working only for
+as long as the Alvik's firmware chose to read that pin. It has been replaced by
+a bistable relay contact in the Alvik's motor supply, on this board's own Qwiic
+bus. The governed component now has nothing to agree to, and the contact holds
+its position through a power cut at every board in the rig.
+
 ## What it does
 
 | Function | Mechanism |
@@ -26,8 +34,9 @@ oversight function.
 | Out-of-band human override | Physical NC button on D2. Latches, and stays latched after release. |
 | Governance liveness watchdog | The VENTUNO Q must heartbeat every 500 ms. Silence beyond 2 s latches an override. |
 | Audit attestation witness | Retains the last 64 audit hash-chain digests in its own memory, off the governance host. |
-| Governance state annunciator | 12x8 LED matrix shows WATCHING, OVERRIDE, STALE or ATTEST. |
-| Hard kill line | D3 drives the Alvik kill-switch input directly, independent of the serial link. |
+| Governance state annunciator | 12x8 LED matrix shows WATCHING, OVERRIDE, STALE, ATTEST or LATCH. |
+| Physical enforcement | A bistable relay contact in the Alvik's motor supply, on this board's Qwiic bus at I2C `0x2A`. |
+| Enforcement read back | An antivalent sense pair on D3 and D5 observes the contact. Disagreement latches an override. |
 
 ## Two enforcement paths
 
@@ -38,36 +47,73 @@ This is the only board wired to both, and the difference matters.
    trust boundary here is the USB-C cable: anyone who can write to that cable
    can forge an `OVERRIDE_CLEAR`. This is stated plainly in
    `linux-stack/tests/test_security_oversight.py`, which tests the forgery.
-2. **Hard line**, over GPIO. D3 drives the Alvik's kill-switch input. The
-   Alvik firmware rejects every command while that pin reads active. No frame
-   on any link can reach this path, so the forged clear above buys nothing.
+2. **Physical**, through the relay. The contact sits in the Alvik's motor
+   supply. No frame on any link can reach it, so the forged clear above buys
+   nothing: the governance tier may ask for the contact to be *opened*, which
+   is always honoured because more ways to stop are safe, and it may ask for it
+   to be *closed*, which is refused outright while an override stands.
 
-The kill line is also held from boot until the first heartbeat arrives. A
-governance tier that has not yet said anything has not yet earned the
-authority to move a robot. There is no latch and no arming step: the line
-releases on first contact.
+The contact is held open from boot until the first heartbeat arrives. A
+governance tier that has not yet said anything has not yet earned the authority
+to move a robot. There is no latch and no arming step: the contact closes on
+first contact and reopens on any override.
+
+### Reading the contact back, and why it takes two channels
+
+A command whose effect is never checked is an assertion. So the board reads
+three things every 100 ms: what it last commanded, what the module's own MCU
+reports over I2C, and what a sense circuit on the contact observes.
+
+The module register is a cross-check only. A small MCU behind an I2C interface
+most likely echoes the last command it accepted rather than observing where the
+contact physically sits, and believing it would reproduce the exact error this
+read-back exists to remove: the component that was told to stop reporting that
+it stopped.
+
+The observation is **antivalent**, two channels that must disagree with each
+other. One is energised only while the contact is open, the other only while
+the motor rail is live. A single channel would not do: whichever way one pin is
+wired, one of its two readings is also what a cut wire produces, so one contact
+position becomes indistinguishable from a fault, and if that position is *open*
+a broken wire reports the motors isolated when nothing at all is known about
+them. With the pair, a cut harness, a dead opto or a flat battery leaves both
+channels dark, the readings stop being complementary, and the answer is
+`LATCH_UNKNOWN`. Nothing rounds that up to isolation.
+
+Only the energised channel is under test at any instant, so a break in the dark
+one stays latent until the contact next moves. That is one reason every command
+reads back and the pair is polled at a fixed cadence rather than waiting for an
+edge: a contact that silently failed to move raises no edge either.
+
+Any disagreement latches an `OVERRIDE_ASSERT(LATCH_MISMATCH)`, shows the LATCH
+glyph, and is acted on independently by both sides of the link. Neither side is
+allowed to rely on the other having noticed.
 
 ## Wiring
 
 | Pin | Direction | Connects to | Notes |
 |---|---|---|---|
 | D2 | input, `INPUT_PULLUP` | Override button, normally closed to GND | NC on purpose: a cut wire reads as pressed |
-| D3 | output | Alvik kill-switch input (D4 on the Alvik) | Active low. Common ground required. |
+| D3 | input, `INPUT_PULLUP` | Sense channel A, opto across the contact | Low only while the contact is open |
 | D4 | input, `INPUT_PULLUP` | Clear button, normally open to GND | Momentary. The state machine may refuse the clear. |
+| D5 | input, `INPUT_PULLUP` | Sense channel B, opto across the motor rail | Low only while the rail is live |
+| Qwiic | I2C | Modulino Latch Relay, `0x2A` | SET and RESET are 50 ms coil pulses |
 | USB-C | serial | VENTUNO Q | 921600 baud |
 
-The two boards must share a ground for the kill line to mean anything. A
-floating line reads as noise, which is the one failure mode this design cannot
-detect on its own.
+Nothing on this board is wired to the Alvik. The relay contact is in the motor
+supply and the two sense channels are opto-isolated, so there is no shared
+ground to get wrong and no pin on the governed board to depend on.
+`docs/deployment-guide.md` Part 6 has the wiring in full.
 
 ## Files
 
 | File | Contents |
 |---|---|
-| `r4_supervisor.ino` | Sketch: pins, LED matrix glyphs, serial I/O, optional Wi-Fi console |
+| `r4_supervisor.ino` | Sketch: pins, LED matrix glyphs, serial I/O, relay and sense glue, optional Wi-Fi console |
+| `latch.h` / `.cpp` | Latch relay driver. Pure logic; hardware injected as four function pointers. |
 | `supervisor_state.h` / `.cpp` | The state machine. No Arduino headers: pure logic, host-compilable. |
-| `ipc_frame.h` / `.cpp` | IPC codec, oversight subset. CRC-16/CCITT, five message types. |
-| `test/parity_harness.cpp` | Host driver that exposes the two logic files over a line protocol |
+| `ipc_frame.h` / `.cpp` | IPC codec, oversight subset. CRC-16/CCITT, seven message types. |
+| `test/parity_harness.cpp` | Host driver that exposes the three logic files over a line protocol |
 
 The sketch deliberately implements no decoder for `COMMAND_REQUEST`. This board
 is not on the actuation path, and leaving those decoders out reduces what it
@@ -77,14 +123,14 @@ can be talked into doing.
 
 There is no Arduino toolchain in CI and no board attached, so the sketch itself
 is not executed by the test suite. Everything that decides behaviour, though,
-lives in `supervisor_state.cpp` and `ipc_frame.cpp`, which are plain C++ with
-no Arduino headers.
+lives in `supervisor_state.cpp`, `ipc_frame.cpp` and `latch.cpp`, which are
+plain C++ with no Arduino headers.
 
 `linux-stack/oversight/mock_supervisor.py` is the executable specification: a
 Python model of the same state machine, driven over a pty exactly as the real
 board is driven over USB-C. The C++ here is a port of it.
 
-`linux-stack/tests/test_r4_firmware_parity.py` compiles these two files for the
+`linux-stack/tests/test_r4_firmware_parity.py` compiles these three files for the
 host with `-Wall -Wextra -Werror`, drives them through
 `test/parity_harness.cpp`, and checks them against the Python codec and the
 reference model: byte-identical frames, identical verdict sequences, identical
@@ -100,14 +146,19 @@ cd linux-stack && python3 -m pytest tests/test_r4_firmware_parity.py -v
 
 The parity tests skip, with a reason, when no C++ compiler is present. What is
 not covered here is the Arduino layer itself: pin behaviour, the LED matrix
-driver, Wi-Fi, and `Serial` timing at 921600 baud. Those need the board.
+driver, Wi-Fi, `Serial` timing at 921600 baud, and the electrical behaviour of
+the relay and its sense pair. Those need the board. The sense glue is
+`digitalRead`, which the harness cannot drive, so it is checked as text
+instead: `test_the_sketch_senses_the_contact_on_two_channels` asserts that both
+pins are present, both are pulled up, and the glue can still answer
+`LATCH_UNKNOWN`.
 
 To compile the harness by hand:
 
 ```bash
 cd r4-supervisor/test
 g++ -std=c++17 -Wall -Wextra -Werror -I.. -o parity_harness \
-    parity_harness.cpp ../ipc_frame.cpp ../supervisor_state.cpp
+    parity_harness.cpp ../ipc_frame.cpp ../supervisor_state.cpp ../latch.cpp
 echo -e "TICK 100\nSTATE\nQUIT" | ./parity_harness
 ```
 

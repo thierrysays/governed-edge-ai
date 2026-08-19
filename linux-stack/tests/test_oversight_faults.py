@@ -273,13 +273,13 @@ class TestSupervisorResync:
         with MockR4Supervisor(heartbeat_timeout_ms=10_000.0) as node:
             channel = open(node.device, "rb+", buffering=0)
             try:
-                assert node.kill_line_asserted is True
+                assert node.motor_power_cut is True
                 channel.write(encode(SupervisorHeartbeat(
                     last_audit_ref=0, system_state=SystemState.ARMED,
                     events_logged=0, commands_sent=0,
                 )))
                 time.sleep(SETTLE_S)
-                assert node.kill_line_asserted is False
+                assert node.motor_power_cut is False
             finally:
                 channel.close()
 

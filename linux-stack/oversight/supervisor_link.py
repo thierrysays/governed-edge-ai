@@ -11,11 +11,17 @@ protocol has no OVERRIDE_DENY.
 Outbound (VENTUNO Q -> R4)
     SUPERVISOR_HEARTBEAT   liveness plus session counters, every 500 ms
     ATTEST_DIGEST          the audit chain head, once per logged event
+    LATCH_REQUEST          please put the relay contact here. A request only.
 
 Inbound (R4 -> VENTUNO Q)
     OVERRIDE_ASSERT        stop issuing commands, with a reason
     OVERRIDE_CLEAR         override released
     ATTEST_ACK             the R4's live verdict on the last digest
+    LATCH_REPORT           commanded, reported and observed contact position
+
+The latch is owned by the R4 and this side can only ask. A request to close
+while an override is latched is refused, and no message exists that would
+change that.
 
 Fail-safe on link loss
 ----------------------
@@ -40,6 +46,9 @@ from ipc.codec import (
     AttestDigest,
     AttestVerdict,
     FrameParser,
+    LatchPosition,
+    LatchReport,
+    LatchRequest,
     OverrideAssert,
     OverrideClear,
     OverrideReason,
@@ -94,6 +103,7 @@ class SupervisorLink:
         self._override = False
         self._override_reason: OverrideReason | None = None
         self._last_verdict: AttestVerdict | None = None
+        self._last_latch: LatchReport | None = None
 
         self._events_logged = 0
         self._commands_sent = 0
@@ -120,6 +130,23 @@ class SupervisorLink:
     def last_verdict(self) -> AttestVerdict | None:
         """Most recent ATTEST_ACK verdict from the oversight node."""
         return self._last_verdict
+
+    @property
+    def last_latch(self) -> LatchReport | None:
+        """Most recent LATCH_REPORT from the arbiter, or None."""
+        return self._last_latch
+
+    @property
+    def motors_isolated(self) -> bool:
+        """True only when the arbiter has *observed* the contact open.
+
+        False before any report arrives and false when the observation is
+        UNKNOWN. This side never infers isolation it has not been shown.
+        """
+        return (
+            self._last_latch is not None
+            and self._last_latch.observed is LatchPosition.OPEN
+        )
 
     @property
     def chain_head(self) -> bytes:
@@ -186,6 +213,16 @@ class SupervisorLink:
         self._send(encode(AttestDigest(audit_ref=row.audit_ref, digest=head)))
         self.heartbeat()
         return head
+
+    def request_latch(self, desired: LatchPosition, *, audit_ref: int = 0) -> None:
+        """Ask the arbiter to move the contact. It may refuse.
+
+        Requesting OPEN is the governance tier asking for its own decision to
+        be enforced physically, which the arbiter always honours. Requesting
+        CLOSED is asking to be let go, which it honours only when nothing is
+        latched. Both are requests: this side cannot move the relay.
+        """
+        self._send(encode(LatchRequest(audit_ref=audit_ref, desired=desired)))
 
     def heartbeat(self, *, system_state: SystemState = SystemState.ARMED,
                   force: bool = False) -> bool:
@@ -256,6 +293,14 @@ class SupervisorLink:
             self._last_verdict = msg.verdict
             if msg.verdict != AttestVerdict.CHAIN_OK:
                 self._raise_override(OverrideReason.ATTESTATION_MISMATCH)
+        elif isinstance(msg, LatchReport):
+            self._last_latch = msg
+            # A contact that is not where it was told to be is a fault in
+            # either direction, so this side stops issuing commands too. The
+            # arbiter has its own override for the same reading; both firing
+            # is correct, since neither is allowed to rely on the other.
+            if not msg.agrees:
+                self._raise_override(OverrideReason.LATCH_MISMATCH)
 
     def _send(self, frame: bytes) -> None:
         with contextlib.suppress(OSError, ValueError):
