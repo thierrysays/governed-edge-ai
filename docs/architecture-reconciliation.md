@@ -209,19 +209,47 @@ Classes: **A** load-bearing · **B** substantive but contained · **C** document
 | D14 | Cameras | IMX219 ×2, MIPI CSI. **Sourced**: Kubii 8 MP module for Raspberry Pi | "Still to source", no Arduino-native CSI confirmed | **C** | 7.1 |
 | D15 | Modulino Hub + Buttons, Pixels, Buzzer | **Removed**, redundant with the R4 | Absent | **C** | 3 |
 
-### 7.1 Cameras: sourced, with one thing to check
+### 7.1 Cameras: sourced, and what the specification implies
 
-The camera is settled: the [Kubii 8 MP module for Raspberry Pi](https://www.kubii.com/fr/cameras-capteurs/3610-module-camera-8mp-pour-raspberry-pi-3272496309692.html) (EAN 3272496309692), two of them, matching the diagram's *IMX219 ×2*. That closes the longest-running open item in `docs/build-log.md`, where the camera has been listed as unsourced since the first commit and `docs/cowork-bom-arduino.md` still calls it the most critical unknown. Both documents need correcting.
+The camera is settled: the [Kubii 8 MP module for Raspberry Pi](https://www.kubii.com/fr/cameras-capteurs/3610-module-camera-8mp-pour-raspberry-pi-3272496309692.html) (EAN 3272496309692), an **Arducam IMX219**, two of them, matching the diagram's *IMX219 ×2*. That closes the longest-running open item in the project: `docs/build-log.md` has listed the camera as unsourced since the first commit and `docs/cowork-bom-arduino.md` still calls it the most critical unknown. Both need correcting.
 
-The 8 MP Raspberry Pi camera is the Camera Module v2, Sony IMX219, which is what the diagram names. Two of them use both ISP channels, as the architecture assumes.
+**The ribbon question is closed.** The module ships with both cables: 15 cm CSI 15-pin to 22-pin (Pi 3/4) and 15 cm CSI 22-pin to 22-pin (Pi Zero, Pi 5). Whichever connector the VENTUNO Q presents, a cable is in the box.
 
-**One thing to verify before ordering, which I could not check from here** (the Kubii page is blocked by this session's egress proxy):
+| Specification | Value |
+|---|---|
+| Sensor | Sony IMX219, 8 MP |
+| Stills | 3280 × 2464 |
+| Video | 1080p30, 720p60, VGA90 |
+| Interface | MIPI CSI-2, 2 lanes |
+| Focal length / aperture | 3.04 mm, f/2.0 |
+| Field of view | 62.2° horizontal, 48.8° vertical |
+| Focus | Fixed, 200 mm to infinity |
+| Shutter | Rolling |
+| IR | Filter fitted, visible light only |
 
-The Camera Module v2 conventionally ships with a **15-pin** FFC. The diagram specifies a **22-pin** ribbon, which is the narrow connector used on the Pi Zero, the Pi 5 and several compute-module carriers. If the VENTUNO Q's CSI connector is the 22-pin type, each camera needs a 15-to-22-pin adapter cable, and those are sold separately more often than not. Two cameras, two cables.
+### What this means for the governance argument
 
-Worth confirming three things on the product page and against the VENTUNO Q's connector: the pin count of the supplied cable, the connector pitch on the board, and the cable length, since 15 cm is the common default and a demo rig usually wants more.
+Four properties have consequences beyond image quality, and three of them argue for keeping the Modulino Distance module recommended in section 3.
 
-Until the VENTUNO Q pinout is published this cannot be settled definitively, which puts it in the same holding pattern as section 12. The difference is that a wrong cable costs a few euros and a week, not a redesign.
+**Minimum focus is 200 mm.** Anything closer than 20 cm is out of focus. On a small mobile robot the dangerous zone is exactly that near field: a hand reaching in, an obstacle at the bumper. The primary observer is blind, or at least blurred, precisely where the risk is highest. The ToF module (VL53L4CD, roughly 1 mm to 1.3 m) covers that band and is unaffected by focus. This moves Distance from "nice to have" to "covers a known hole in the primary sensor".
+
+**Rolling shutter.** Different rows of the frame are exposed at different instants. On a moving platform that produces skew, and it means a single frame does not represent a single moment. For a demonstrator this is acceptable; for a safety claim about *where something was when we decided to stop*, it is a real error term that no amount of model accuracy removes. It should be stated in the threat model alongside the other untested hardware claims rather than discovered later.
+
+**62.2° horizontal field of view.** Narrow. Anything outside that cone does not exist to the primary observer, and the audit log will faithfully record that nothing was detected. Two cameras can be arranged for stereo depth on one 62° cone or splayed for roughly 120° of coverage, and those are different safety arguments. The diagram says CSI 0 and CSI 1 without saying which. It needs deciding, because the choice determines what the phrase "safety envelope" actually covers.
+
+**Visible light only, with the IR filter fitted.** Perception degrades in low light, and a system that degrades silently is worse than one that fails loudly. The audit log already records confidence per detection, so a lighting collapse shows up as a confidence collapse, and the suppression rate already in the dashboard is the natural place to surface it. Worth an explicit threshold rather than leaving it to whoever reads the log.
+
+**Fixed focus is a small win.** No autofocus hunting means no nondeterminism in the perception path, which is the right trade for a governance system.
+
+**Cable length is 15 cm.** Both supplied ribbons are short, which constrains where the cameras can sit relative to the VENTUNO Q. Longer CSI ribbons are inexpensive; worth ordering with the modules rather than discovering the constraint during assembly.
+
+### The risk that replaces the cable question
+
+*Compatible Raspberry Pi OS Bullseye* is a claim about Broadcom hardware and the Pi camera stack. The VENTUNO Q is a Qualcomm IQ8 running Ubuntu, where camera capture goes through the Qualcomm CAMSS pipeline rather than the Pi's. IMX219 has a mainline kernel driver, which makes this plausible, and plausible is not the same as working: it needs a sensor driver bound through CAMSS and a device-tree entry describing the CSI lanes.
+
+That is the real open item, and it is bigger than the cable ever was. It cannot be settled until the VENTUNO Q pinout and device tree are published, which puts it in the same holding pattern as section 12.
+
+**Mitigation that costs nothing:** `perception/capture.py` already abstracts the frame source, with V4L2, synthetic and file backends. If CSI capture on the VENTUNO Q proves difficult, a USB UVC camera on the same abstraction keeps the rig running while the CSI path is sorted out. The witness UNO Q is specified with a UVC webcam anyway, so that path is already in the design.
 
 ---
 
@@ -366,18 +394,19 @@ Steps 10 to 16 are testable hardware-free on the existing pattern: real state ma
 
 ## 15. Open questions
 
-Answers change the design, not just the wording. Six of the nine gate step 11.
+Answers change the design, not just the wording. Several gate step 11.
 
 1. **Scénario C, Lot E.** The diagram's subtitle names a taxonomy absent from the repository. What are the other scenarios and lots, and does this sit inside that scheme?
-1b. **Camera ribbon:** does the Kubii module ship with a 15-pin or 22-pin cable, and which does the VENTUNO Q take? Section 7.1.
-2. **Distance and Movement: keep or drop?** Section 3 recommends keeping both on the R4. Dropping them removes two controls from `governance-mapping.md`.
-3. **Latch state read-back:** polled, interrupt-driven, or on demand? Affects the arbiter's timing budget.
-4. **Witness disagreement:** what counts, over what window, veto or vote?
-5. **Witness model independence:** different weights or a different architecture?
-6. **Nesso radio:** Wi-Fi 6 and BLE as drawn, or LoRa for out-of-room range?
-7. **Signing key custody:** Nesso, arbiter, or both?
-8. **Arbiter migration:** does the R4 hand off to the STM32H5 when the pinout lands, or keep the role?
-9. **Movement module mounting:** on the Alvik, read by the R4? It reads as an exception to the design rule and is not one, because the Alvik has no path to alter what it reports. Worth stating explicitly.
+2. **Camera arrangement:** two IMX219 on one 62.2° cone for stereo depth, or splayed for roughly 120° of coverage? Different safety envelopes. Section 7.1.
+3. **IMX219 on Qualcomm CAMSS:** does the VENTUNO Q device tree bind the mainline IMX219 driver? Gates the whole CSI path; UVC is the fallback. Section 7.1.
+4. **Distance and Movement: keep or drop?** Section 3 recommends keeping both, wired to the R4, and section 7.1 strengthens the case for Distance. Dropping them removes two controls from `governance-mapping.md`.
+5. **Latch state read-back:** polled, interrupt-driven, or on demand? Affects the arbiter's timing budget. Section 6.
+6. **Witness disagreement:** what counts as disagreement, over what window, and does the witness hold a veto or a vote? Section 8.
+7. **Witness model independence:** different weights, or a different architecture? Section 8.
+8. **Nesso radio:** Wi-Fi 6 and BLE as drawn, or LoRa for genuine out-of-room range? Section 9.
+9. **Signing key custody:** Nesso, arbiter, or both? Section 10.
+10. **Arbiter migration:** does the R4 hand off to the STM32H5 when the pinout lands, or keep the role? Section 12.
+11. **Movement module mounting:** on the Alvik, read by the R4? It reads as an exception to the design rule and is not one, because the Alvik has no path to alter what it reports. Worth stating explicitly. Section 3.
 
 ---
 
@@ -394,12 +423,15 @@ Answers change the design, not just the wording. Six of the nine gate step 11.
 | 2026-08-19 | A remote lift is asymmetrically signed, verified off the Linux path, bound to one episode, and audited | A compromised VENTUNO Q must not be able to forge a lift |
 | 2026-08-19 | The relay note is amended to *authenticated human gesture* | Resolves the contradiction without weakening the principle |
 | 2026-08-19 | `v2.0.0` is held unpublished | It presents the R4 as a tier wired to the Alvik, which this supersedes |
-| 2026-08-19 | Cameras sourced: Kubii 8 MP for Raspberry Pi (IMX219) ×2 | Matches the diagram; closes the oldest open item. Ribbon pin count still to verify. |
+| 2026-08-19 | Cameras sourced: Arducam IMX219 8 MP ×2 via Kubii | Matches the diagram; closes the oldest open item. Both ribbon adapters included. |
+| 2026-08-19 | Modulino Distance is upgraded from optional to recommended | The IMX219's 200 mm minimum focus leaves the near field, where the risk is highest, blurred. The ToF covers that band. |
 
 ---
 
 ## 17. What this document does not do
 
 It changes no code and orders no hardware. It does not settle section 15, and six of those questions gate step 11.
+
+The camera's rolling shutter, its 62.2° cone and its low-light behaviour are named here but not yet written into `docs/architecture.md` section 12, where the untested hardware claims live. Step 10 does that.
 
 It also does not re-examine whether the diagram's overall shape is right. That is taken as given; sections 5 and 6 argue for two specific choices within it, and section 3 argues for one departure from it.
