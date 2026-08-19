@@ -7,9 +7,10 @@ addopts = [
     "--cov=ipc",
     "--cov=perception",
     "--cov=governance",
+    "--cov=oversight",
     "--cov-report=term-missing",
     "--cov-report=html:htmlcov",
-    "--cov-fail-under=90",
+    "--cov-fail-under=98",
 ]
 markers = [
     "smoke: fast end-to-end sanity check, run first in CI",
@@ -19,7 +20,7 @@ markers = [
 ]
 
 [tool.coverage.run]
-source = ["ipc", "perception", "governance"]
+source = ["ipc", "perception", "governance", "oversight"]
 omit = [
     "tests/*",
     "perception/backends_impl.py",    # requires ultralytics / mediapipe (not in CI)
@@ -28,6 +29,10 @@ omit = [
 [tool.coverage.report]
 show_missing = true
 skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",   # entry-point guard, not logic
+]
 
 [tool.ruff]
 line-length = 100
@@ -38,7 +43,12 @@ select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "S"]
 ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["S101"]  # assert is legitimate in pytest
+"tests/*" = [
+    "S101",    # assert is legitimate in pytest
+    "SIM115",  # tests hold pty and pipe descriptors open across a fixture's
+               # lifetime to model a serial device; a context manager would
+               # close the channel before the test that needs it runs
+]
 
 [tool.mypy]
 python_version = "3.11"

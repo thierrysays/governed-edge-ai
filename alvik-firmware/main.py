@@ -10,8 +10,13 @@ Governance contract enforced on this MCU:
      VENTUNO Q Linux side is the first. An IEEE 754 rounding edge at
      exactly 0.70 is caught here even if Linux passed it.
   3. Unknown action types are rejected with REJ_UNKNOWN_ACTION.
-  4. The kill-switch (physical button on pin KILL_PIN) halts all motion
-     immediately and rejects all subsequent commands until reset.
+  4. The kill-switch (KILL_PIN) halts all motion immediately and rejects
+     all subsequent commands until reset. From the four-board configuration
+     onward this pin is driven by D3 on the UNO R4 WiFi oversight node, not
+     only by a local button. That is the hard enforcement path: it holds
+     even if the VENTUNO Q ignores the oversight node's soft veto, because
+     no message on any link can reach this pin. A common ground between the
+     two boards is required for it to mean anything.
 
 Serial interface:
   VENTUNO Q connects to the Alvik ESP32-S3 via USB-C. Commands arrive
@@ -29,18 +34,19 @@ from arduino_alvik import ArduinoAlvik  # type: ignore[import]
 
 from ipc_codec import (
     CONFIDENCE_THRESHOLD,
-    FrameParser,
     REJ_AUDIT_REF_ZERO,
     REJ_CONFIDENCE_BELOW_THRESHOLD,
     REJ_KILL_SWITCH_ACTIVE,
     REJ_UNKNOWN_ACTION,
+    FrameParser,
     encode_ack,
     encode_halt_notify,
     encode_reject,
 )
 from motor_map import MOTOR_MAP
 
-# Pin wired to the physical kill-switch momentary button (active-low)
+# Kill-switch input, active low. Driven by the UNO R4 WiFi oversight node
+# (its D3) and, optionally, by a local momentary button in parallel.
 KILL_PIN = 4
 
 _READ_CHUNK = 64

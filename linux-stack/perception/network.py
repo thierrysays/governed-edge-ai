@@ -142,7 +142,12 @@ class DetectionResultServer:
     (list[DetectionResult]) as they arrive.
     """
 
-    def __init__(self, host: str = "0.0.0.0", port: int = 9100) -> None:  # noqa: S104
+    # Binds every interface by design: the UNO Q reaches the VENTUNO Q over
+    # whichever link is up (Wi-Fi or USB-C ethernet gadget), and which one is
+    # not known at start-up. The boundary is the operator's own LAN, as the
+    # deployment section of docs/architecture.md states. Pass an explicit host
+    # to narrow it.
+    def __init__(self, host: str = "0.0.0.0", port: int = 9100) -> None:  # noqa: S104  # nosec B104
         self._host = host
         self._port = port
         self._server: socket.socket | None = None

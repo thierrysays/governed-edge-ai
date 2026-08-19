@@ -17,7 +17,27 @@ Governance contract (enforced here, not trusted from upstream):
      enforce their own threshold independently (defence-in-depth).
   6. ACK/REJECT tracking: update_stm32_ack() is called exactly once per
      transmitted command. A response timeout leaves stm32_ack NULL in the
-     audit log.
+     audit log. A write that fails outright leaves stm32_ack NULL and flags
+     the event: the row already claims command_sent=1 and the log is
+     append-only, so the flag is the only honest way to record that the
+     frame never reached the wire.
+  7. Oversight veto: when a SupervisorLink is attached, the UNO R4 WiFi
+     oversight node is polled before any command is transmitted. While its
+     override is asserted, every detection is logged with command_sent=False
+     and the reason recorded in notes. The veto is one-directional: this
+     filter can neither clear the override nor tell the oversight node to
+     stand down.
+  8. Witness-before-act: each logged row is read back from SQLite, folded
+     into the attestation hash chain, and the new chain head is published to
+     the oversight node before the CommandRequest frame is written. The
+     independent witness therefore holds a digest covering the audit row
+     before the actuator ever sees the command.
+
+     Limit worth stating: the filter does not block on the node's ATTEST_ACK
+     before transmitting. A verdict of GAP or CHAIN_BREAK raises the override
+     and stops the next command, not the one in flight. Blocking on the ack
+     would put the oversight link inside the actuation latency budget, which
+     is the wrong trade for a link whose job is to observe.
 
 Runtime dependency:
   The audit-service logger module (audit-service/logger.py) must be on
@@ -43,6 +63,8 @@ from ipc.codec import (
     FrameParser,
     encode,
 )
+from oversight.attestation import AuditRow
+from oversight.supervisor_link import SupervisorLink
 from perception.base import DetectionResult
 
 # ---------------------------------------------------------------------------
@@ -95,6 +117,12 @@ class GovernanceFilter:
     response_timeout_s:
         Maximum seconds to wait for CommandAck/CommandReject after sending
         a CommandRequest. Timeout leaves stm32_ack NULL in the audit log.
+    supervisor:
+        Optional SupervisorLink to the UNO R4 WiFi oversight node. When
+        present, its override vetoes command dispatch and every logged row is
+        chained and published to it. None runs the three-board configuration
+        with no independent oversight tier, which is the weaker arrangement
+        the R4 exists to correct.
     """
 
     def __init__(
@@ -106,6 +134,7 @@ class GovernanceFilter:
         confidence_threshold: float = 0.70,
         command_map: dict[str, tuple[ActionType, int]] | None = None,
         response_timeout_s: float = 0.5,
+        supervisor: SupervisorLink | None = None,
     ) -> None:
         self._logger = logger
         self._session_id = session_id
@@ -113,6 +142,7 @@ class GovernanceFilter:
         self._threshold = confidence_threshold
         self._command_map = command_map if command_map is not None else DEFAULT_COMMAND_MAP
         self._timeout = response_timeout_s
+        self._supervisor = supervisor
         self._t0_us = int(time.monotonic() * 1_000_000)
         self._parser = FrameParser()
 
@@ -130,6 +160,11 @@ class GovernanceFilter:
         if not detections:
             return
 
+        # Ask the oversight node first. Its answer gates every detection in
+        # this frame, and it is asked before anything is logged so that the
+        # veto is on record against the same rows it suppressed.
+        override_note = self._oversight_note()
+
         # Highest-confidence detection first: it is the only candidate for
         # command dispatch; all others are logged as suppressed.
         by_confidence = sorted(detections, key=lambda d: d.confidence, reverse=True)
@@ -140,7 +175,8 @@ class GovernanceFilter:
                 detection.label, _DEFAULT_ACTION
             )
             should_send = (
-                not command_sent_this_frame
+                override_note is None
+                and not command_sent_this_frame
                 and detection.passes_threshold(self._threshold)
             )
 
@@ -156,7 +192,12 @@ class GovernanceFilter:
                 command=action_type.name,
                 command_sent=should_send,
                 stm32_ack=None,
+                notes=override_note,
             ))
+
+            # Witness-before-act: the oversight node holds a digest covering
+            # this row before the command frame is written.
+            self._witness(audit_ref, command_sent=should_send)
 
             if should_send:
                 command_sent_this_frame = True
@@ -167,6 +208,35 @@ class GovernanceFilter:
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    def _oversight_note(self) -> str | None:
+        """Poll the oversight node. Returns a note to record, or None if clear."""
+        if self._supervisor is None:
+            return None
+        if not self._supervisor.poll():
+            return None
+        reason = self._supervisor.override_reason
+        label = reason.name if reason is not None else "UNSPECIFIED"
+        return f"suppressed: oversight override active ({label})"
+
+    def _witness(self, audit_ref: int, *, command_sent: bool) -> None:
+        """Fold the stored row into the attestation chain and publish the head.
+
+        The row is read back from SQLite rather than reconstructed from the
+        AuditEvent: the chain must commit to what the database holds, not to
+        what this process believes it wrote.
+        """
+        if self._supervisor is None:
+            return
+        row = self._logger.fetch_event(audit_ref)
+        if row is None:  # pragma: no cover - log_event just returned this id
+            return
+        self._supervisor.record(AuditRow.from_mapping(row), command_sent=command_sent)
+
+    @property
+    def chain_head(self) -> bytes | None:
+        """Current attestation chain head, or None with no oversight node."""
+        return None if self._supervisor is None else self._supervisor.chain_head
 
     def _send_command(
         self,
@@ -186,7 +256,17 @@ class GovernanceFilter:
             action_type=action_type,
             action_param=action_param,
         ))
-        self._channel.write(frame)
+        try:
+            self._channel.write(frame)
+        except OSError as exc:
+            # The row already says command_sent=1, and the log is append-only,
+            # so the record cannot be withdrawn. Flag it instead: an event
+            # marked for review is the honest way to say the frame was
+            # composed and never reached the wire.
+            self._logger.flag_event(
+                audit_ref, notes=f"transmit failed: {exc.__class__.__name__}: {exc}"
+            )
+            return None
         return self._read_response(audit_ref)
 
     def _read_response(self, audit_ref: int) -> bool | None:

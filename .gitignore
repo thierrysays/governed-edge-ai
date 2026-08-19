@@ -58,3 +58,8 @@ htmlcov/
 .pytest_cache/
 __pycache__/
 *.py[cod]
+
+# Arduino
+arduino_secrets.h
+r4-supervisor/test/parity_harness
+build/

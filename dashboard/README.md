@@ -7,9 +7,12 @@ Browser-based dashboard for the governed edge AI demonstrator. Served over the l
 Provides the operator with a live view of:
 
 - Recent inference events (detection label, confidence score, command issued)
-- Flagged events (low confidence, potential drift)
+- Flagged events (low confidence, potential drift, transmit failures)
 - Kill-switch and system status
+- Events suppressed by the oversight node, with the reason recorded against each
 - Session history
+
+The operator-facing governance state is not here. It is on the UNO R4 WiFi's 12x8 LED matrix, driven from that board's own state machine. A dashboard served by the governance host cannot be trusted to report that the governance host has stopped.
 
 ## Access model
 
@@ -17,4 +20,4 @@ Local network only. The service binds to the board's LAN interface and is not re
 
 ## Status
 
-Implementation pending. Backend framework (Flask or FastAPI) TBD once the audit service logger is in place.
+Backend implemented in `audit-service/dashboard/` (FastAPI, read-only, 100% test coverage). This directory holds the browser front end, which is not yet written.

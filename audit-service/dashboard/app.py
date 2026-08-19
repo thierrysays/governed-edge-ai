@@ -99,7 +99,7 @@ def list_sessions(db: Db) -> list[dict[str, object]]:
 def list_events(
     db: Db,
     session_id: str | None = Query(default=None),
-    actor: str | None = Query(default=None, pattern="^(ai|human_override)$"),
+    actor: str | None = Query(default=None, pattern="^(ai|human_override|oversight)$"),
     flagged: bool | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),

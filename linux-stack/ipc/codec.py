@@ -1,7 +1,10 @@
 """
-IPC frame codec: Linux (NPU) ↔ STM32H5 binary protocol.
+IPC frame codec: Linux (NPU) ↔ STM32H5 / UNO R4 WiFi binary protocol.
 
-Implements all 8 message types from docs/ipc-protocol.md v0.1.
+Implements all 13 message types from docs/ipc-protocol.md v0.2:
+  - 8 actuation messages on the VENTUNO Q ↔ Alvik link (0x01..0x90)
+  - 5 oversight messages on the VENTUNO Q ↔ UNO R4 WiFi link (0x30..0xA2)
+
 Transport-agnostic: encode() produces bytes; decode() consumes bytes.
 FrameParser handles incremental UART stream input.
 
@@ -32,12 +35,20 @@ _ACK_REJ = struct.Struct("<QB")       # 8+1 = 9 bytes (shared by ACK and REJECT)
 _HALT    = struct.Struct("<QB")       # 8+1 = 9 bytes
 _STATUS  = struct.Struct("<BBIII")    # 1+1+4+4+4 = 14 bytes
 
+# Oversight link (VENTUNO Q ↔ UNO R4 WiFi)
+_SUP_HB     = struct.Struct("<QBII")  # 8+1+4+4 = 17 bytes
+_ATTEST     = struct.Struct("<Q32s")  # 8+32 = 40 bytes
+_OVR_ASSERT = struct.Struct("<QB")    # 8+1 = 9 bytes
+_OVR_CLEAR  = struct.Struct("<Q")     # 8 bytes
+_ATTEST_ACK = struct.Struct("<QB")    # 8+1 = 9 bytes
+
 
 # ---------------------------------------------------------------------------
 # Enumerations (reference tables from ipc-protocol.md)
 # ---------------------------------------------------------------------------
 
 class MsgType(IntEnum):
+    # Actuation link: VENTUNO Q ↔ Alvik (STM32F411) and VENTUNO Q internal STM32H5
     COMMAND_REQUEST = 0x01
     HEARTBEAT       = 0x10
     STATUS_QUERY    = 0x20
@@ -46,11 +57,19 @@ class MsgType(IntEnum):
     HALT_NOTIFY     = 0x90
     HEARTBEAT_ACK   = 0x11
     STATUS_RESPONSE = 0x21
+    # Oversight link: VENTUNO Q → UNO R4 WiFi
+    SUPERVISOR_HEARTBEAT = 0x30
+    ATTEST_DIGEST        = 0x31
+    # Oversight link: UNO R4 WiFi → VENTUNO Q
+    OVERRIDE_ASSERT = 0xA0
+    OVERRIDE_CLEAR  = 0xA1
+    ATTEST_ACK      = 0xA2
 
 
 class Actor(IntEnum):
     AI             = 0x01
     HUMAN_OVERRIDE = 0x02
+    OVERSIGHT      = 0x03   # UNO R4 WiFi supervisor node
 
 
 class ActionType(IntEnum):
@@ -88,13 +107,39 @@ class RejectReason(IntEnum):
     PARAM_OUT_OF_RANGE         = 0x07
     SYSTEM_FAULT               = 0x08
     AUDIT_REF_ZERO             = 0x09
+    OVERSIGHT_OVERRIDE_ACTIVE  = 0x0A
 
 
 class HaltTrigger(IntEnum):
-    KILL_SWITCH_GPIO = 0x01
-    WATCHDOG         = 0x02
-    SAFETY_BOUNDARY  = 0x03
-    LINUX_COMMANDED  = 0x04
+    KILL_SWITCH_GPIO    = 0x01
+    WATCHDOG            = 0x02
+    SAFETY_BOUNDARY     = 0x03
+    LINUX_COMMANDED     = 0x04
+    SUPERVISOR_OVERRIDE = 0x05   # asserted by the UNO R4 WiFi oversight node
+
+
+class OverrideReason(IntEnum):
+    """Why the UNO R4 WiFi oversight node asserted an override."""
+
+    OPERATOR_BUTTON            = 0x01   # physical NC button on the R4
+    GOVERNANCE_HEARTBEAT_LOST  = 0x02   # VENTUNO Q stopped reporting
+    ATTESTATION_MISMATCH       = 0x03   # audit chain gap or rollback observed
+    REMOTE_CONSOLE             = 0x04   # override raised over the R4 Wi-Fi console
+
+
+class AttestVerdict(IntEnum):
+    """The oversight node's live verdict on an ATTEST_DIGEST frame.
+
+    The R4 holds no audit rows, so it cannot recompute the hash chain. It
+    verifies what an independent observer can verify from the digest stream
+    alone: strict audit_ref monotonicity with no gaps, and no repeated or
+    rewound reference. Full chain verification is an offline reconciliation
+    of the retained digests against the SQLite log.
+    """
+
+    CHAIN_OK    = 0x00   # audit_ref == previous + 1
+    CHAIN_BREAK = 0x01   # audit_ref <= previous: replay or rollback
+    GAP         = 0x02   # audit_ref > previous + 1: rows missing from the stream
 
 
 class SystemState(IntEnum):
@@ -165,9 +210,61 @@ class StatusResponse:
     msg_type: MsgType = MsgType.STATUS_RESPONSE
 
 
+@dataclass(frozen=True)
+class SupervisorHeartbeat:
+    """VENTUNO Q → UNO R4 WiFi: proof the governance tier is alive and logging."""
+
+    last_audit_ref: int      # uint64: highest audit_log rowid written so far
+    system_state: SystemState
+    events_logged: int       # uint32: rows written this session
+    commands_sent: int       # uint32: CommandRequest frames transmitted this session
+    msg_type: MsgType = MsgType.SUPERVISOR_HEARTBEAT
+
+
+@dataclass(frozen=True)
+class AttestDigest:
+    """VENTUNO Q → UNO R4 WiFi: rolling hash-chain head over the audit log."""
+
+    audit_ref: int           # uint64: rowid of the row that produced this head
+    digest: bytes            # 32 bytes: SHA-256 chain head
+    msg_type: MsgType = MsgType.ATTEST_DIGEST
+
+    def __post_init__(self) -> None:
+        if len(self.digest) != 32:
+            raise ValueError(f"digest must be 32 bytes, got {len(self.digest)}")
+
+
+@dataclass(frozen=True)
+class OverrideAssert:
+    """UNO R4 WiFi → VENTUNO Q: oversight override raised. Stop issuing commands."""
+
+    timestamp_us: int        # uint64: microseconds since R4 boot
+    reason: OverrideReason
+    msg_type: MsgType = MsgType.OVERRIDE_ASSERT
+
+
+@dataclass(frozen=True)
+class OverrideClear:
+    """UNO R4 WiFi → VENTUNO Q: oversight override released."""
+
+    timestamp_us: int        # uint64
+    msg_type: MsgType = MsgType.OVERRIDE_CLEAR
+
+
+@dataclass(frozen=True)
+class AttestAck:
+    """UNO R4 WiFi → VENTUNO Q: verdict on the last ATTEST_DIGEST received."""
+
+    audit_ref: int           # uint64: echoed from the digest frame
+    verdict: AttestVerdict
+    msg_type: MsgType = MsgType.ATTEST_ACK
+
+
 Message = (
     CommandRequest | CommandAck | CommandReject | HaltNotify
     | Heartbeat | HeartbeatAck | StatusQuery | StatusResponse
+    | SupervisorHeartbeat | AttestDigest
+    | OverrideAssert | OverrideClear | AttestAck
 )
 
 
@@ -223,6 +320,19 @@ def _pack(msg: Message) -> bytes:
             int(msg.system_state), msg.kill_switch_gpio,
             msg.commands_received, msg.commands_rejected, msg.commands_executed,
         )
+    if isinstance(msg, SupervisorHeartbeat):
+        return _SUP_HB.pack(
+            msg.last_audit_ref, int(msg.system_state),
+            msg.events_logged, msg.commands_sent,
+        )
+    if isinstance(msg, AttestDigest):
+        return _ATTEST.pack(msg.audit_ref, msg.digest)
+    if isinstance(msg, OverrideAssert):
+        return _OVR_ASSERT.pack(msg.timestamp_us, int(msg.reason))
+    if isinstance(msg, OverrideClear):
+        return _OVR_CLEAR.pack(msg.timestamp_us)
+    if isinstance(msg, AttestAck):
+        return _ATTEST_ACK.pack(msg.audit_ref, int(msg.verdict))
     if isinstance(msg, (Heartbeat, HeartbeatAck, StatusQuery)):
         return b""
     raise TypeError(f"Cannot encode {type(msg).__name__}")
@@ -276,6 +386,11 @@ def _unpack(msg_type: MsgType, payload: bytes) -> Message:
     _require(payload, 9,  MsgType.COMMAND_REJECT,   msg_type)
     _require(payload, 9,  MsgType.HALT_NOTIFY,      msg_type)
     _require(payload, 14, MsgType.STATUS_RESPONSE,  msg_type)
+    _require(payload, 17, MsgType.SUPERVISOR_HEARTBEAT, msg_type)
+    _require(payload, 40, MsgType.ATTEST_DIGEST,     msg_type)
+    _require(payload, 9,  MsgType.OVERRIDE_ASSERT,   msg_type)
+    _require(payload, 8,  MsgType.OVERRIDE_CLEAR,    msg_type)
+    _require(payload, 9,  MsgType.ATTEST_ACK,        msg_type)
 
     if msg_type == MsgType.HEARTBEAT:
         return Heartbeat()
@@ -305,7 +420,27 @@ def _unpack(msg_type: MsgType, payload: bytes) -> Message:
             system_state=SystemState(state_b), kill_switch_gpio=gpio,
             commands_received=recv, commands_rejected=rej, commands_executed=exe,
         )
-    raise FrameError(f"No decoder for {msg_type!r}")  # unreachable after _require guards
+    if msg_type == MsgType.SUPERVISOR_HEARTBEAT:
+        ref, state_b, logged, sent = _SUP_HB.unpack(payload)
+        return SupervisorHeartbeat(
+            last_audit_ref=ref, system_state=SystemState(state_b),
+            events_logged=logged, commands_sent=sent,
+        )
+    if msg_type == MsgType.ATTEST_DIGEST:
+        ref, digest = _ATTEST.unpack(payload)
+        return AttestDigest(audit_ref=ref, digest=digest)
+    if msg_type == MsgType.OVERRIDE_ASSERT:
+        ts, reason_b = _OVR_ASSERT.unpack(payload)
+        return OverrideAssert(timestamp_us=ts, reason=OverrideReason(reason_b))
+    if msg_type == MsgType.OVERRIDE_CLEAR:
+        (ts,) = _OVR_CLEAR.unpack(payload)
+        return OverrideClear(timestamp_us=ts)
+    if msg_type == MsgType.ATTEST_ACK:
+        ref, verdict_b = _ATTEST_ACK.unpack(payload)
+        return AttestAck(audit_ref=ref, verdict=AttestVerdict(verdict_b))
+    # Unreachable: every MsgType has a decoder above and _require has already
+    # validated the payload length for each one.
+    raise FrameError(f"No decoder for {msg_type!r}")  # pragma: no cover
 
 
 def _require(payload: bytes, length: int, target: MsgType, actual: MsgType) -> None:
@@ -354,6 +489,19 @@ class FrameParser:
                 return  # wait for full header
 
             _, _, payload_len = _HEADER.unpack(bytes(self._buf[:4]))
+
+            # A length field larger than the protocol allows cannot begin a
+            # valid frame, so the magic byte was noise or the header was
+            # corrupted. Without this guard the parser waits forever for bytes
+            # that will never arrive and every later frame is swallowed with
+            # them: one corrupt header would take the link down until restart.
+            if payload_len > MAX_PAYLOAD:
+                self.errors.append(
+                    f"Payload length {payload_len} exceeds {MAX_PAYLOAD}: resynchronising"
+                )
+                del self._buf[:1]
+                continue
+
             frame_len = 4 + payload_len + 2
 
             if len(self._buf) < frame_len:

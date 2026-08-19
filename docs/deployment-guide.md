@@ -1,0 +1,1064 @@
+# Deployment Guide
+
+**From bare metal to a running four-board demonstrator.**
+
+Version 1.0, 2026-08-19
+
+This guide assumes nothing. If you have never flashed a microcontroller, never
+used a serial port and have only ever met Python through a tutorial, you are
+the reader this was written for. Every command is given in full. Where a step
+can go wrong, the failure and its fix are written down next to it rather than
+left for you to discover.
+
+Read Part 0 before buying or wiring anything.
+
+---
+
+## Table of contents
+
+- [Part 0: What you are building, and the safety rules](#part-0-what-you-are-building-and-the-safety-rules)
+- [Part 1: Bill of materials](#part-1-bill-of-materials)
+- [Part 2: Run it with no hardware at all](#part-2-run-it-with-no-hardware-at-all)
+- [Part 3: Prepare your workstation](#part-3-prepare-your-workstation)
+- [Part 4: Flash the Alvik](#part-4-flash-the-alvik)
+- [Part 5: Flash the UNO R4 WiFi oversight node](#part-5-flash-the-uno-r4-wifi-oversight-node)
+- [Part 6: Wire the kill line](#part-6-wire-the-kill-line)
+- [Part 7: Set up the VENTUNO Q governance node](#part-7-set-up-the-ventuno-q-governance-node)
+- [Part 8: Set up the UNO Q perception node](#part-8-set-up-the-uno-q-perception-node)
+- [Part 9: First full run](#part-9-first-full-run)
+- [Part 10: Verify the governance controls](#part-10-verify-the-governance-controls)
+- [Part 11: Run it as a service](#part-11-run-it-as-a-service)
+- [Part 12: Troubleshooting](#part-12-troubleshooting)
+- [Appendix A: Command reference](#appendix-a-command-reference)
+- [Appendix B: Glossary](#appendix-b-glossary)
+
+---
+
+## Part 0: What you are building, and the safety rules
+
+### The system in one paragraph
+
+Four Arduino boards. One watches the world through a camera and says what it
+sees. One decides whether that justifies moving, writes the decision to a
+tamper-evident log, and only then sends a command. One is a wheeled robot that
+executes the command, but refuses any command that does not carry a valid log
+reference. The fourth watches the third and can stop everything, and it is the
+only one with a physical button and a wire that cuts the robot off.
+
+```
+UNO Q 4GB          VENTUNO Q                Alvik
+Perception    -->  Governance         -->   Robot body
+                        |
+                        | heartbeat + audit digests
+                        v
+                   UNO R4 WiFi
+                   Oversight  ----------->  (hard kill line to the Alvik)
+```
+
+### Four safety rules, before anything else
+
+These are not boilerplate. A wheeled robot with motors will move when you do
+not expect it to.
+
+1. **Test on blocks first.** Prop the Alvik so its wheels are off the ground
+   until you have seen the override work. Part 10 tells you when to put it
+   down.
+2. **Know where the override button is** before you power anything on. Put it
+   somewhere you can hit without looking.
+3. **Never bypass the kill line to make a demo work.** If commands are being
+   refused, the system is telling you something true. Read Part 12 rather than
+   unplugging D3.
+4. **Common ground or nothing.** The kill line only works if the R4 and the
+   Alvik share a ground. A floating wire reads as noise, and this is the one
+   failure this design cannot detect for you.
+
+### How long this takes
+
+| Part | Time | Needs hardware |
+|---|---|---|
+| Part 2, software only | 20 minutes | No |
+| Parts 3 to 6, flash and wire | 1 to 2 hours | Yes |
+| Parts 7 to 9, boards up and talking | 2 to 3 hours | Yes |
+| Part 10, verification | 30 minutes | Yes |
+
+Do Part 2 first even if all four boards are on your desk. It proves your
+software works before any hardware can confuse the picture.
+
+---
+
+## Part 1: Bill of materials
+
+### Boards
+
+| Item | Why | Notes |
+|---|---|---|
+| Arduino UNO Q 4GB | Perception node | Needs a camera, see below |
+| Arduino VENTUNO Q | Governance node | Runs Linux, SQLite and the filter |
+| Arduino Alvik | The robot body | Ships with an 18650 battery |
+| Arduino UNO R4 WiFi | Oversight node | The one this guide adds |
+
+### Parts you will also need
+
+| Item | Quantity | Why |
+|---|---|---|
+| Momentary push button, normally closed (NC) | 1 | The override button. NC matters: see Part 6. |
+| Momentary push button, normally open (NO) | 1 | The clear button |
+| Jumper wires, male to male | 4 | Kill line, ground, two buttons |
+| USB-C cable, data-capable | 3 | Board interconnects |
+| USB-C power supply | 2 | UNO Q and VENTUNO Q |
+| Camera module for the UNO Q ISP | 1 or 2 | See the note below |
+| Breadboard, half size | 1 | Optional, but easier than soldering |
+
+**Charging cables are not data cables.** Many USB-C cables carry power only.
+If a board does not appear as a serial device, suspect the cable first. This
+wastes more beginner hours than any other single thing.
+
+**On the camera**: at the time of writing no Arduino-native CSI module for the
+UNO Q 4GB has been confirmed. `docs/cowork-bom-arduino.md` tracks the search.
+You do not need a camera to complete this guide: the synthetic frame source in
+Part 9 substitutes for one, and every governance control can be verified
+without it.
+
+### On the buttons
+
+The override button is **normally closed**: pressing it *opens* the circuit.
+That is the opposite of what feels natural, and it is deliberate. With a
+normally closed button, a cut wire, a pulled connector or a failed switch all
+read the same as a press. The system fails towards stopping. A normally open
+button that fails silently leaves you with an override that does nothing, and
+you would not find out until you needed it.
+
+The clear button is normally open, because a failed clear button simply means
+you cannot clear, which is the safe direction.
+
+---
+
+## Part 2: Run it with no hardware at all
+
+Everything in this section runs on an ordinary laptop. No boards, no cables.
+The mock peers are real implementations of the two microcontroller state
+machines driven over Unix pseudo-terminals, so the software path you exercise
+here is the one that runs on the rig.
+
+### 2.1 Check your Python
+
+You need Python 3.11 or newer.
+
+```bash
+python3 --version
+```
+
+If that prints 3.10 or lower, or "command not found":
+
+- **Ubuntu or Debian**: `sudo apt update && sudo apt install python3.11 python3.11-venv git`
+- **macOS**: install [Homebrew](https://brew.sh), then `brew install python@3.11 git`
+- **Windows**: install [WSL2](https://learn.microsoft.com/windows/wsl/install)
+  and follow the Ubuntu instructions inside it. The rest of this guide assumes
+  Linux or macOS. Native Windows is not supported: the code uses Unix
+  pseudo-terminals, which Windows does not provide.
+
+### 2.2 Get the code
+
+```bash
+git clone https://github.com/thierrysays/governed-edge-ai.git
+cd governed-edge-ai
+```
+
+### 2.3 Create a virtual environment
+
+A virtual environment keeps this project's packages out of your system Python.
+Skipping it is the second most common source of beginner trouble.
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+Your prompt should now start with `(.venv)`. It will stay that way until you
+close the terminal or run `deactivate`. **Every command from here on assumes
+the virtual environment is active.** If you open a new terminal, run
+`source .venv/bin/activate` again.
+
+### 2.4 Install the dependencies
+
+```bash
+pip install --upgrade pip
+pip install -r linux-stack/requirements.txt
+pip install -r audit-service/requirements.txt
+```
+
+### 2.5 Run the test suite
+
+```bash
+make qa
+```
+
+This runs the linter, the type checker, two security scanners and the full test
+suite. It takes about a minute. You should see, at the end of each module:
+
+```
+Required test coverage of 98% reached. Total coverage: 100.00%
+512 passed
+```
+
+If `make qa` passes, your software is sound and any later problem is hardware
+or wiring. That is worth the minute.
+
+If it fails: check that the virtual environment is active, that
+`python3 --version` is 3.11 or newer, and that both `pip install` commands
+completed. The C++ parity tests skip with a message if you have no compiler,
+which is fine; install `g++` (`sudo apt install g++`) to run them.
+
+### 2.6 Run the whole stack with mocks
+
+Three terminals. Activate the virtual environment in each.
+
+**Terminal 1, the governance node:**
+
+```bash
+cd governed-edge-ai/linux-stack
+PYTHONPATH=../audit-service python3 -m governance.ventuno_q_service \
+    --alvik mock --supervisor mock --db /tmp/audit.db
+```
+
+You should see the audit session ID, a pty path for the mock Alvik, a pty path
+for the mock oversight node, and `Listening for UNO Q on 0.0.0.0:9100`.
+
+**Terminal 2, the perception node:**
+
+```bash
+cd governed-edge-ai/linux-stack
+python3 -m perception.uno_q_service --source synthetic --host 127.0.0.1
+```
+
+Synthetic frames now flow into the governance filter.
+
+**Terminal 3, look at the audit log:**
+
+```bash
+sqlite3 /tmp/audit.db \
+  "SELECT id, detection_label, confidence, command, command_sent, stm32_ack FROM audit_log LIMIT 10;"
+```
+
+Every detection is on record. `command_sent = 1` marks the one command sent per
+frame; `stm32_ack = 1` means the mock MCU accepted it. If `sqlite3` is not
+installed: `sudo apt install sqlite3`.
+
+Stop both services with Ctrl-C.
+
+### 2.7 Run the audit dashboard
+
+```bash
+cd governed-edge-ai/audit-service
+DB_PATH=/tmp/audit.db python3 -m uvicorn dashboard.app:app --host 127.0.0.1 --port 8000
+```
+
+Open <http://127.0.0.1:8000/docs> in a browser for the interactive API, or
+<http://127.0.0.1:8000/events> for the raw event list.
+
+You now have the full software stack working. Everything from here adds
+hardware to a system you have already seen run.
+
+---
+
+## Part 3: Prepare your workstation
+
+### 3.1 Install the Arduino tooling
+
+You need `arduino-cli` for the R4, and `mpremote` for the Alvik.
+
+```bash
+# arduino-cli
+curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | sh
+sudo mv bin/arduino-cli /usr/local/bin/
+arduino-cli version
+
+# Board support and library for the UNO R4 WiFi
+arduino-cli core update-index
+arduino-cli core install arduino:renesas_uno
+arduino-cli lib install "Arduino_LED_Matrix"
+
+# MicroPython tooling for the Alvik
+pip install mpremote
+```
+
+If you prefer a graphical tool, the [Arduino IDE
+2.x](https://www.arduino.cc/en/software) does everything `arduino-cli` does.
+The commands below give the IDE equivalent where it differs.
+
+### 3.2 Get permission to use serial ports
+
+On Linux, serial devices belong to the `dialout` group. Without membership you
+get `Permission denied` on every upload.
+
+```bash
+sudo usermod -a -G dialout $USER
+```
+
+**Log out and back in** for this to take effect. A new terminal is not enough.
+Check with `groups | grep dialout`.
+
+On macOS no group change is needed.
+
+### 3.3 Learn to find your boards
+
+Plug in one board at a time and run:
+
+```bash
+# Linux
+ls /dev/ttyACM* /dev/ttyUSB* 2>/dev/null
+# macOS
+ls /dev/cu.usbmodem* 2>/dev/null
+```
+
+Note which path appears for which board. Plugging in one at a time is the only
+reliable way to tell them apart, and getting this wrong means flashing the
+wrong firmware to the wrong board.
+
+`arduino-cli board list` also shows connected boards with their names.
+
+The paths are not stable across reboots or replugging. Part 11 shows how to
+give each board a fixed name.
+
+---
+
+## Part 4: Flash the Alvik
+
+The Alvik runs MicroPython. Firmware is copied as files, not compiled.
+
+### 4.1 Check the Alvik's MicroPython
+
+Connect the Alvik by USB-C, switch it on, then:
+
+```bash
+mpremote connect /dev/ttyACM0 exec "import arduino_alvik; print('Alvik library present')"
+```
+
+If that errors, follow Arduino's [Alvik getting started
+guide](https://docs.arduino.cc/tutorials/alvik/getting-started/) to install
+MicroPython and the `arduino_alvik` library first. Come back when the command
+above prints its message.
+
+### 4.2 Copy the firmware
+
+```bash
+cd governed-edge-ai/alvik-firmware
+mpremote connect /dev/ttyACM0 fs cp ipc_codec.py :ipc_codec.py
+mpremote connect /dev/ttyACM0 fs cp motor_map.py :motor_map.py
+mpremote connect /dev/ttyACM0 fs cp main.py     :main.py
+```
+
+`main.py` runs automatically at boot. Copying it is the last step, so the board
+does not start running a half-installed firmware.
+
+### 4.3 Confirm it is running
+
+```bash
+mpremote connect /dev/ttyACM0 fs ls
+```
+
+You should see all three files. Reset the board (the button on the Alvik) and
+it will start listening for commands over USB-C.
+
+**The Alvik's kill-switch pin is D4**, active low. Part 6 wires the R4 to it.
+Until then the pin floats, which the firmware reads as "not pressed". That is
+why the wheels stay on blocks.
+
+---
+
+## Part 5: Flash the UNO R4 WiFi oversight node
+
+### 5.1 Compile
+
+```bash
+cd governed-edge-ai
+arduino-cli compile --fqbn arduino:renesas_uno:unor4wifi r4-supervisor
+```
+
+The sketch folder contains `.cpp` files alongside the `.ino`; the compiler
+picks them all up. The `test/` subfolder is ignored, which is why the parity
+harness lives there.
+
+Expect a clean compile with no warnings. If you see `Arduino_LED_Matrix.h: No
+such file`, the library install in Part 3.1 did not run.
+
+### 5.2 Upload
+
+Connect the R4 by USB-C and find its port, then:
+
+```bash
+arduino-cli upload --fqbn arduino:renesas_uno:unor4wifi -p /dev/ttyACM1 r4-supervisor
+```
+
+In the IDE: open `r4-supervisor/r4_supervisor.ino`, select **Arduino UNO R4
+WiFi** under Tools > Board, pick the port, and click Upload.
+
+### 5.3 Confirm it is watching
+
+Look at the 12x8 LED matrix. Within a second of boot you should see a **steady
+rectangular outline**: the WATCHING glyph. That means the state machine is
+running.
+
+The kill line on D3 is held **low** at this point, because no heartbeat has
+arrived yet. That is correct: a governance tier that has not said anything has
+not earned the authority to move a robot. The line releases by itself when the
+VENTUNO Q starts talking in Part 9.
+
+The four glyphs:
+
+| Glyph | Meaning |
+|---|---|
+| Rectangular outline | WATCHING. Nothing wrong. |
+| Solid block | OVERRIDE. An operator pressed the button. |
+| Broken bars | STALE. The governance tier stopped reporting. |
+| Diagonal cross | ATTEST. The audit digest stream skipped or rewound. |
+
+---
+
+## Part 6: Wire the kill line
+
+Power everything **off** before wiring.
+
+### 6.1 The connections
+
+| From | To | Wire |
+|---|---|---|
+| R4 D3 | Alvik D4 | Kill line |
+| R4 GND | Alvik GND | Common ground, mandatory |
+| R4 D2 | One leg of the NC button | Override button |
+| Other leg of the NC button | R4 GND | Override button return |
+| R4 D4 | One leg of the NO button | Clear button |
+| Other leg of the NO button | R4 GND | Clear button return |
+
+No resistors are needed. Both inputs use the R4's internal pull-ups, configured
+in `setup()`.
+
+### 6.2 Why the ground wire is not optional
+
+Digital logic reads voltage relative to ground. Without a shared ground, the
+Alvik has no fixed reference for what the R4 is putting on D3, and the pin
+reads noise. It might read high, it might read low, it might change as you move
+your hand near it. The kill line becomes decorative.
+
+Connect the grounds first, before the signal wire. Then check it: with both
+boards off, a multimeter set to continuity should beep between R4 GND and Alvik
+GND.
+
+### 6.3 Check the override button before you trust it
+
+With the R4 powered and nothing else connected:
+
+1. Press and hold the override button. The matrix should switch to the solid
+   block within about 30 ms.
+2. Release it. **The block stays.** That is the latch, and it is correct.
+3. Press the clear button. Nothing happens yet, because no heartbeat has ever
+   arrived and the node will not conclude the governance tier is healthy on the
+   strength of silence.
+
+If step 1 does nothing, check the wiring, then check that the button really is
+normally closed: with the button untouched, a multimeter on continuity should
+beep between its legs, and stop beeping while pressed. A normally open button
+in that slot gives you a permanently asserted override, which looks like a
+broken board.
+
+---
+
+## Part 7: Set up the VENTUNO Q governance node
+
+The VENTUNO Q runs Linux. Treat it as a small server.
+
+### 7.1 First boot
+
+Follow Arduino's setup for the board: connect a display and keyboard, or
+connect over SSH once it is on your network. Log in and confirm you have a
+shell.
+
+### 7.2 Install what the stack needs
+
+```bash
+sudo apt update
+sudo apt install -y python3 python3-venv python3-pip git sqlite3
+```
+
+### 7.3 Deploy the code
+
+```bash
+sudo mkdir -p /opt/governed-edge-ai
+sudo chown $USER /opt/governed-edge-ai
+git clone https://github.com/thierrysays/governed-edge-ai.git /opt/governed-edge-ai
+cd /opt/governed-edge-ai
+
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -r linux-stack/requirements.txt
+pip install -r audit-service/requirements.txt
+```
+
+### 7.4 Give the audit log its own storage
+
+The audit log is the governance artefact. Put it somewhere a full OS disk
+cannot take it out, ideally a separate device.
+
+```bash
+sudo mkdir -p /data
+sudo chown $USER /data
+```
+
+If you have separate storage, mount it at `/data` and add it to
+`/etc/fstab` so it survives a reboot.
+
+### 7.5 Prove the deployment before adding hardware
+
+```bash
+cd /opt/governed-edge-ai
+make qa
+```
+
+Same suite, running on the target. If it passes here, the board's Python is
+sound.
+
+### 7.6 Note the board's IP address
+
+```bash
+hostname -I
+```
+
+Write it down. The UNO Q needs it in Part 8. If it changes on every boot, set a
+static lease on your router: chasing a moving IP address gets old fast.
+
+---
+
+## Part 8: Set up the UNO Q perception node
+
+Same shape as Part 7. The UNO Q runs the camera and the models.
+
+### 8.1 Install and deploy
+
+```bash
+sudo apt update
+sudo apt install -y python3 python3-venv python3-pip git
+
+sudo mkdir -p /opt/governed-edge-ai
+sudo chown $USER /opt/governed-edge-ai
+git clone https://github.com/thierrysays/governed-edge-ai.git /opt/governed-edge-ai
+cd /opt/governed-edge-ai
+
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -r linux-stack/requirements.txt
+```
+
+### 8.2 Check the camera, if you have one
+
+```bash
+ls /dev/video*
+```
+
+`/dev/video0` is device index 0, and so on. To confirm it produces frames:
+
+```bash
+sudo apt install -y v4l-utils
+v4l2-ctl --device=/dev/video0 --all | head -20
+```
+
+No camera yet? Skip this. `--source synthetic` generates frames and every
+governance control in Part 10 can be verified without a lens.
+
+### 8.3 Models are optional
+
+The perception service tries to load YOLO-X, MediaPipe and PoseNet, and falls
+back to a stub backend for each one it cannot load. The fallback is announced
+in the log at startup. Stubs produce realistic detections, so the governance
+path is exercised either way.
+
+Adding real models is a separate exercise and is not needed to get the
+demonstrator running.
+
+---
+
+## Part 9: First full run
+
+**Wheels off the ground.** Prop the Alvik on a box so its drive wheels spin
+free.
+
+### 9.1 Power-on order
+
+Order matters, because each board fails safe when the one below it is absent.
+
+1. **Alvik.** Switch on. It waits for commands.
+2. **UNO R4 WiFi.** The matrix shows WATCHING and the kill line is held low, so
+   the Alvik is refusing everything.
+3. **VENTUNO Q.** Boot it, but do not start the service yet.
+4. **UNO Q.** Boot it, but do not start the service yet.
+
+### 9.2 Identify the two serial devices on the VENTUNO Q
+
+Plug in the Alvik and the R4 one at a time:
+
+```bash
+ls /dev/ttyACM*
+```
+
+Write down which is which. Getting them the wrong way round means the
+governance filter sends commands to the oversight node and heartbeats to the
+robot, and nothing works in a way that is confusing to debug.
+
+### 9.3 Start the governance service
+
+On the VENTUNO Q:
+
+```bash
+cd /opt/governed-edge-ai/linux-stack
+source ../.venv/bin/activate
+PYTHONPATH=../audit-service python3 -m governance.ventuno_q_service \
+    --alvik /dev/ttyACM0 \
+    --supervisor /dev/ttyACM1 \
+    --db /data/audit.db
+```
+
+Substitute your two device paths.
+
+**Watch the R4 as this starts.** The kill line releases within a second, as
+soon as the first heartbeat lands. The matrix stays on WATCHING. If it switches
+to STALE, the heartbeat is not arriving: see Part 12.
+
+### 9.4 Start the perception service
+
+On the UNO Q:
+
+```bash
+cd /opt/governed-edge-ai/linux-stack
+source ../.venv/bin/activate
+python3 -m perception.uno_q_service \
+    --source synthetic \
+    --host 192.168.1.50 \
+    --port 9100
+```
+
+Substitute the VENTUNO Q's IP address. With a camera, use
+`--source v4l2 --device 0` instead.
+
+### 9.5 Watch it work
+
+On the VENTUNO Q, in a second terminal:
+
+```bash
+watch -n 1 'sqlite3 /data/audit.db \
+  "SELECT id, detection_label, confidence, command, command_sent, stm32_ack \
+   FROM audit_log ORDER BY id DESC LIMIT 10;"'
+```
+
+Rows should be appearing. The Alvik's wheels should turn when a command with
+`stm32_ack = 1` goes through.
+
+If the wheels turn: the whole chain works. Leave the Alvik on its blocks for
+Part 10.
+
+---
+
+## Part 10: Verify the governance controls
+
+Do not skip this. An untested control is a claim, and the entire point of this
+project is the difference between the two.
+
+### Test 1: the override button stops actuation
+
+1. With everything running and commands flowing, **press the override button**.
+2. The matrix switches to the solid block. The wheels stop.
+3. Check the log:
+
+```bash
+sqlite3 /data/audit.db \
+  "SELECT id, command_sent, notes FROM audit_log ORDER BY id DESC LIMIT 5;"
+```
+
+Every row after the press should show `command_sent = 0` and a note containing
+`OPERATOR_BUTTON`. The system is still recording everything it sees. It has
+stopped acting on it.
+
+**If the wheels do not stop, stop the demonstration and go to Part 12.**
+
+### Test 2: the override latches
+
+Release the button. The matrix stays on the solid block; commands stay
+suppressed. It does not lapse because the button came back up.
+
+### Test 3: clearing requires a physical act
+
+Press the clear button on the R4. The matrix returns to the outline and
+commands resume. Nothing you can type on the VENTUNO Q does this: the
+governance tier has no message that clears an override, which is checked by
+`test_no_message_type_clears_an_override` in the test suite.
+
+### Test 4: losing governance stops the robot
+
+1. On the VENTUNO Q, stop the governance service with Ctrl-C.
+2. Within 2 seconds the matrix switches to **STALE** and the kill line asserts.
+3. Restart the service. The R4 stays in STALE: the override latched and needs
+   the clear button.
+
+This is the control that matters most and is least visible. A governance
+process that crashes does not leave a robot running on its last instruction.
+
+### Test 5: the hard kill line works on its own
+
+1. Clear the override so everything is running.
+2. Unplug the **USB-C cable between the R4 and the VENTUNO Q**, leaving the D3
+   kill wire connected.
+3. Press the override button. The R4 is now unable to tell the governance tier
+   anything, but the wheels still stop, because D3 drives the Alvik's
+   kill-switch input directly.
+
+That is the two-path design: the soft veto travels on a link that could be cut
+or forged, and the hard line does not travel on a link at all.
+
+### Test 6: the audit log detects tampering
+
+```bash
+cd /opt/governed-edge-ai/linux-stack
+source ../.venv/bin/activate
+PYTHONPATH=../audit-service python3 -c "
+import sqlite3
+from oversight.attestation import verify_database
+conn = sqlite3.connect('/data/audit.db')
+print(verify_database(conn).reason)
+"
+```
+
+Then edit a row by hand, as an attacker with database access would:
+
+```bash
+sqlite3 /data/audit.db "UPDATE audit_log SET confidence = 0.01 WHERE id = 3;"
+```
+
+Recompute. Structural checks alone will still pass, because the row count is
+intact. Reconciling against the digests the R4 witnessed is what catches it,
+and that comparison needs the digests read back from the board. The mechanism,
+its reach and its limits are described in `r4-supervisor/README.md`.
+
+### Test 7: put it on the floor
+
+Only now. Repeat Test 1 with the Alvik on the ground and your hand on the
+override button.
+
+---
+
+## Part 11: Run it as a service
+
+Manual `python3 -m ...` commands do not survive a reboot or a closed terminal.
+
+### 11.1 Give each board a stable device name
+
+Device paths shuffle. Fix them with a udev rule. Get the serial numbers first:
+
+```bash
+udevadm info -a -n /dev/ttyACM0 | grep '{serial}' | head -1
+```
+
+Create `/etc/udev/rules.d/99-governed-edge-ai.rules`:
+
+```
+SUBSYSTEM=="tty", ATTRS{serial}=="YOUR_ALVIK_SERIAL", SYMLINK+="alvik"
+SUBSYSTEM=="tty", ATTRS{serial}=="YOUR_R4_SERIAL",    SYMLINK+="oversight"
+```
+
+Reload and replug:
+
+```bash
+sudo udevadm control --reload-rules && sudo udevadm trigger
+ls -l /dev/alvik /dev/oversight
+```
+
+Now use `/dev/alvik` and `/dev/oversight` everywhere instead of `/dev/ttyACM*`.
+
+### 11.2 A systemd unit for the governance service
+
+Create `/etc/systemd/system/governed-edge-ai.service`:
+
+```ini
+[Unit]
+Description=governed-edge-ai governance service (VENTUNO Q)
+After=network.target
+
+[Service]
+Type=simple
+User=YOUR_USERNAME
+WorkingDirectory=/opt/governed-edge-ai/linux-stack
+Environment=PYTHONPATH=/opt/governed-edge-ai/audit-service
+ExecStart=/opt/governed-edge-ai/.venv/bin/python -m governance.ventuno_q_service \
+    --alvik /dev/alvik \
+    --supervisor /dev/oversight \
+    --db /data/audit.db
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Enable it:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now governed-edge-ai
+sudo systemctl status governed-edge-ai
+journalctl -u governed-edge-ai -f
+```
+
+**Note what `Restart=on-failure` means here.** If the service dies and restarts,
+the R4 will already have latched a STALE override, and it stays latched until
+someone presses the clear button. That is the intended behaviour: an automatic
+restart brings the software back, not the authority to move. Do not add a
+mechanism that clears the override automatically.
+
+### 11.3 The perception service on the UNO Q
+
+Same pattern, `/etc/systemd/system/governed-edge-ai-perception.service`:
+
+```ini
+[Unit]
+Description=governed-edge-ai perception service (UNO Q)
+After=network.target
+
+[Service]
+Type=simple
+User=YOUR_USERNAME
+WorkingDirectory=/opt/governed-edge-ai/linux-stack
+ExecStart=/opt/governed-edge-ai/.venv/bin/python -m perception.uno_q_service \
+    --source synthetic --host 192.168.1.50 --port 9100
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### 11.4 The audit dashboard
+
+`/etc/systemd/system/governed-edge-ai-dashboard.service`:
+
+```ini
+[Unit]
+Description=governed-edge-ai audit dashboard
+After=network.target
+
+[Service]
+Type=simple
+User=YOUR_USERNAME
+WorkingDirectory=/opt/governed-edge-ai/audit-service
+Environment=DB_PATH=/data/audit.db
+ExecStart=/opt/governed-edge-ai/.venv/bin/python -m uvicorn dashboard.app:app \
+    --host 0.0.0.0 --port 8000
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+The dashboard is read-only and unauthenticated, on the assumption that your LAN
+is the boundary. Do not port-forward it to the internet.
+
+---
+
+## Part 12: Troubleshooting
+
+### Nothing appears at `/dev/ttyACM*`
+
+1. Try a different USB-C cable. Charging cables have no data lines, and this is
+   the single most common cause.
+2. `dmesg | tail -20` immediately after plugging in tells you whether the
+   kernel saw the device.
+3. Check `groups | grep dialout` on Linux, and log out and back in if you
+   recently added yourself.
+
+### `Permission denied: '/dev/ttyACM0'`
+
+The `dialout` group change in Part 3.2 has not taken effect. Log out fully and
+back in. Do not work around it with `sudo`: a service running as root to reach
+a serial port is a worse problem than the one you started with.
+
+### The matrix shows STALE and will not clear
+
+The R4 is not receiving heartbeats. In order:
+
+1. Is the governance service actually running?
+   `sudo systemctl status governed-edge-ai`
+2. Is `--supervisor` pointed at the R4 and `--alvik` at the Alvik, rather than
+   the other way round?
+3. Is the USB-C cable a data cable?
+4. Was the R4 flashed with the sketch, or is it still running an old one?
+
+You cannot clear a STALE override while it is stale, by design. Fix the
+heartbeat first, then press clear.
+
+### Commands are logged but the wheels never move
+
+Look at `stm32_ack` in the audit log:
+
+| Value | Meaning | Where to look |
+|---|---|---|
+| `1` | The Alvik accepted and executed | The problem is mechanical: battery, motors, wheels |
+| `0` | The Alvik refused | Kill line asserted, or confidence below its gate |
+| `NULL` | No reply arrived | Serial link to the Alvik: wrong device, bad cable, firmware not running |
+
+For `0`: check whether the R4 is holding an override, and whether D3 is
+actually connected to the Alvik's D4.
+
+For `NULL`: confirm with `mpremote connect /dev/alvik fs ls` that the firmware
+files are on the board.
+
+### `ModuleNotFoundError: No module named 'logger'`
+
+`PYTHONPATH` is not set. The governance filter imports the audit logger from a
+sibling directory. Every invocation needs:
+
+```bash
+PYTHONPATH=/opt/governed-edge-ai/audit-service
+```
+
+The systemd unit in Part 11 sets it for you.
+
+### `Address already in use` on port 9100
+
+A previous governance service is still running.
+
+```bash
+sudo lsof -i :9100
+sudo systemctl stop governed-edge-ai
+```
+
+### The UNO Q cannot reach the VENTUNO Q
+
+```bash
+ping 192.168.1.50                       # from the UNO Q
+nc -zv 192.168.1.50 9100                # is the port open
+```
+
+Check that the governance service is bound (`Listening for UNO Q on
+0.0.0.0:9100` in its log) and that no firewall sits between the two boards.
+
+### Everything worked yesterday and nothing works today
+
+Device paths shuffled on reboot. Part 11.1.
+
+### The override button does nothing
+
+Confirm the button is normally closed, not normally open. With the button
+untouched, a continuity test between its legs should beep; pressing it should
+stop the beep. A normally open button wired here gives a permanently asserted
+override, and the matrix will show the solid block from boot.
+
+---
+
+## Appendix A: Command reference
+
+### Governance service (VENTUNO Q)
+
+```bash
+python3 -m governance.ventuno_q_service [options]
+```
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--listen` | `0.0.0.0` | Address to accept UNO Q connections on |
+| `--port` | `9100` | TCP port for the UNO Q link |
+| `--alvik` | `mock` | Alvik serial device, or `mock` |
+| `--supervisor` | `mock` | R4 serial device, `mock`, or `none` |
+| `--oversight-optional` | off | Do not treat a lost oversight link as an override. Bench only. |
+| `--db` | `:memory:` | Audit database path |
+| `--threshold` | `0.70` | Linux-side confidence gate |
+
+### Perception service (UNO Q)
+
+```bash
+python3 -m perception.uno_q_service [options]
+```
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--source` | `synthetic` | `synthetic` or `v4l2` |
+| `--device` | `0` | V4L2 device index |
+| `--host` | `127.0.0.1` | VENTUNO Q address |
+| `--port` | `9100` | VENTUNO Q port |
+| `--fps` | `10` | Synthetic source frame rate |
+
+### Useful audit queries
+
+```bash
+# Recent activity
+sqlite3 /data/audit.db "SELECT id, ts, detection_label, confidence, command, \
+  command_sent, stm32_ack FROM audit_log ORDER BY id DESC LIMIT 20;"
+
+# Suppression rate
+sqlite3 /data/audit.db "SELECT command_sent, COUNT(*) FROM audit_log \
+  GROUP BY command_sent;"
+
+# Everything the oversight node stopped
+sqlite3 /data/audit.db "SELECT id, ts, notes FROM audit_log \
+  WHERE notes LIKE '%oversight override%';"
+
+# Events flagged for review
+sqlite3 /data/audit.db "SELECT id, ts, notes FROM audit_log WHERE flag = 1;"
+
+# Actions the hardware refused
+sqlite3 /data/audit.db "SELECT id, detection_label, confidence FROM audit_log \
+  WHERE stm32_ack = 0;"
+```
+
+### QA on any machine
+
+```bash
+make smoke       # fast sanity pass
+make test        # full suite with coverage
+make lint        # ruff
+make typecheck   # mypy
+make security    # bandit SAST plus pip-audit CVE scan
+make qa          # all of the above
+```
+
+---
+
+## Appendix B: Glossary
+
+| Term | Meaning |
+|---|---|
+| **Actuation** | Anything that physically moves. Here, the Alvik's motors. |
+| **audit_ref** | The audit log row ID carried in every command. A command without one is refused by the robot. |
+| **Attestation** | Proving a record has not changed since it was written. Here, a chain of SHA-256 digests. |
+| **Bare metal** | Starting from an unconfigured machine, no assumptions. |
+| **Confidence gate** | A minimum model confidence, enforced separately by the governance node and the robot. |
+| **CRC** | A checksum that detects corrupted messages on a serial link. |
+| **Fail closed** | When something breaks, stop. The opposite, fail open, keeps running. |
+| **Flash** | Write firmware onto a microcontroller. |
+| **GPIO** | A pin that can be read or driven high or low. |
+| **Hash chain** | Each entry's digest includes the previous one, so changing an old entry changes all later digests. |
+| **Heartbeat** | A periodic "I am alive" message. Its absence is the signal. |
+| **IPC** | Inter-processor communication. The binary protocol between boards. |
+| **Kill line** | A physical wire that stops the robot, independent of any software. |
+| **Latch** | A state that stays set after its cause goes away, until deliberately cleared. |
+| **NC / NO** | Normally closed / normally open. An NC button opens the circuit when pressed. |
+| **Oversight node** | The UNO R4 WiFi. Watches the governance tier and can stop it. |
+| **pty** | A pseudo-terminal: a software object that behaves like a serial port. Used by the mocks. |
+| **Suppression** | A detection that was logged but produced no command. Deliberate, and on record. |
+| **udev rule** | A Linux rule giving a device a stable name. |
+| **Virtual environment** | A private set of Python packages for one project. |
+| **Watchdog** | A timer that fires if something fails to check in. |
+| **WAL** | Write-ahead logging. A SQLite mode letting readers work alongside a writer. |
+
+---
+
+## Where to go next
+
+| Document | Contents |
+|---|---|
+| `README.md` | The project and its argument |
+| `docs/architecture.md` | Full architectural and functional specification |
+| `docs/ipc-protocol.md` | Binary protocol reference for both links |
+| `docs/governance-mapping.md` | Control objectives mapped to implementation |
+| `r4-supervisor/README.md` | The oversight node in detail |
+| `docs/build-log.md` | Decisions taken, and why |
+
+If something in this guide is wrong or incomplete, that is worth an issue on
+the repository. A deployment guide only earns its place by being tried.
