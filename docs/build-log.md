@@ -1,6 +1,6 @@
 # Build Log
 
-Running record of decisions, discoveries, and blockers for the Glossolalie Advisory case study and the Réseau Daubigny presentation.
+Running record of decisions, discoveries, and blockers for the Glossolalie Advisory case study.
 
 ---
 
