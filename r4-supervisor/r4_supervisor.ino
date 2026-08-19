@@ -33,8 +33,11 @@
  *   D2     OVERRIDE_BUTTON_PIN  momentary NC button to GND, INPUT_PULLUP.
  *                               Normally closed: a cut wire reads as pressed.
  *   D4     CLEAR_BUTTON_PIN     momentary NO button to GND, INPUT_PULLUP.
- *   D3     LATCH_SENSE_PIN      input across the relay contact. The source of
- *                               truth for where the contact actually is.
+ *   D3     LATCH_SENSE_A_PIN    opto across the relay contact: pulled low only
+ *                               while the contact is open.
+ *   D5     LATCH_SENSE_B_PIN    opto across the motor rail: pulled low only
+ *                               while the rail is live. Antivalent with A;
+ *                               see latch_io_read_sense below.
  *   Qwiic  Modulino Latch Relay at I2C 0x2A, and the evidence modules.
  *   USB-C                       serial to the VENTUNO Q at 921600 baud.
  *
@@ -67,7 +70,8 @@ static WiFiServer console(8021);
 #endif
 
 static const uint8_t OVERRIDE_BUTTON_PIN = 2;
-static const uint8_t LATCH_SENSE_PIN     = 3;  /* across the relay contact */
+static const uint8_t LATCH_SENSE_A_PIN   = 3;  /* low while the contact is open */
+static const uint8_t LATCH_SENSE_B_PIN   = 5;  /* low while the motor rail is live */
 static const uint8_t CLEAR_BUTTON_PIN    = 4;  /* momentary NO to GND */
 
 static const unsigned long LINK_BAUD    = 921600;
@@ -219,9 +223,37 @@ static LatchPosition latch_io_read_register(void *) {
   return Wire.read() ? LATCH_OPEN : LATCH_CLOSED;
 }
 
-/* The sense line across the contact. This is the source of truth. */
+/* The sense circuit on the contact. This is the source of truth.
+ *
+ * Two channels, wired antivalent, both INPUT_PULLUP and both active low.
+ * Channel A is an opto across the contact, so its LED sees the full battery
+ * only while the contact is open. Channel B is an opto across the motor rail,
+ * so its LED is lit only while the rail is live. In normal operation exactly
+ * one of them conducts.
+ *
+ * A single channel would not do. Whichever way one pin is wired, one of its
+ * two readings is also what a cut wire produces, so one contact position
+ * becomes indistinguishable from a fault. If that position is OPEN, a broken
+ * sense wire reports the motors isolated when nothing at all is known about
+ * them, which is the one claim this board must never make. With the pair,
+ * a cut harness, a dead opto or a flat battery leaves both channels dark, the
+ * readings stop being complementary, and the answer is UNKNOWN. Nothing
+ * upstream rounds UNKNOWN up to isolation.
+ *
+ * Only the energised channel is under test at any instant, so a break in the
+ * dark one stays latent until the contact next moves. That is one of the
+ * reasons every command reads back and the pair is polled rather than waiting
+ * for an edge. */
 static LatchPosition latch_io_read_sense(void *) {
-  return digitalRead(LATCH_SENSE_PIN) == HIGH ? LATCH_OPEN : LATCH_CLOSED;
+  const bool open_channel   = digitalRead(LATCH_SENSE_A_PIN) == LOW;
+  const bool closed_channel = digitalRead(LATCH_SENSE_B_PIN) == LOW;
+  if (open_channel && !closed_channel) {
+    return LATCH_OPEN;
+  }
+  if (closed_channel && !open_channel) {
+    return LATCH_CLOSED;
+  }
+  return LATCH_UNKNOWN;
 }
 
 /* Drive the relay from the latched state on every pass rather than on
@@ -336,7 +368,8 @@ static void console_poll(uint32_t now_ms) {
 void setup() {
   pinMode(OVERRIDE_BUTTON_PIN, INPUT_PULLUP);
   pinMode(CLEAR_BUTTON_PIN, INPUT_PULLUP);
-  pinMode(LATCH_SENSE_PIN, INPUT);
+  pinMode(LATCH_SENSE_A_PIN, INPUT_PULLUP);
+  pinMode(LATCH_SENSE_B_PIN, INPUT_PULLUP);
 
   Wire.begin();
   matrix.begin();

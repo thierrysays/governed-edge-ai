@@ -7,7 +7,7 @@ implementations of one state machine drift unless something checks them, and
 these tests are that check.
 
 The sketch cannot run here, but everything that decides behaviour lives in
-r4-supervisor/ipc_frame.cpp and supervisor_state.cpp, which are plain C++
+r4-supervisor/ipc_frame.cpp, supervisor_state.cpp and latch.cpp, which are plain C++
 with no Arduino headers. The harness in r4-supervisor/test/parity_harness.cpp
 compiles them for the host and drives them over a line protocol.
 
@@ -571,5 +571,27 @@ class TestLatchParity:
         component. Guard against the wiring coming back."""
         sketch = (_FIRMWARE / "r4_supervisor.ino").read_text()
         assert "KILL_LINE_PIN" not in sketch
-        assert "LATCH_SENSE_PIN" in sketch
+        assert "LATCH_SENSE_A_PIN" in sketch
         assert "latch_enforce_halt" in sketch
+
+    def test_the_sketch_senses_the_contact_on_two_channels(self):
+        """The hardware glue is the one part of the firmware the parity
+        harness cannot exercise, because it is `digitalRead`. So it is checked
+        as text instead.
+
+        A single sense pin cannot distinguish a contact position from a cut
+        wire, and one of the positions it would confuse with a fault is OPEN,
+        which reads as "the motors are isolated". The pair must therefore be
+        present, both pulled up, and the sketch must be able to answer
+        LATCH_UNKNOWN, which the Python model treats as no observation at all.
+        """
+        sketch = (_FIRMWARE / "r4_supervisor.ino").read_text()
+        assert "LATCH_SENSE_A_PIN" in sketch
+        assert "LATCH_SENSE_B_PIN" in sketch
+        assert sketch.count("INPUT_PULLUP") >= 4          # 2 buttons, 2 sense
+        assert "pinMode(LATCH_SENSE_A_PIN, INPUT_PULLUP)" in sketch
+        assert "pinMode(LATCH_SENSE_B_PIN, INPUT_PULLUP)" in sketch
+        # The fault answer has to be reachable from the sense glue itself.
+        body = sketch.split("static LatchPosition latch_io_read_sense")[1]
+        glue = body.split("\n}")[0]
+        assert "return LATCH_UNKNOWN;" in glue

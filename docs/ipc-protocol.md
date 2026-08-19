@@ -1,6 +1,6 @@
 # IPC Protocol Specification
 
-Version 0.2, 2026-08-19  
+Version 0.3, 2026-08-19  
 Status: implemented in `linux-stack/ipc/codec.py`, `alvik-firmware/ipc_codec.py` and `r4-supervisor/ipc_frame.cpp`
 
 ## Purpose
@@ -10,7 +10,7 @@ This document specifies the inter-processor communication (IPC) protocol used on
 | Link | Endpoints | Purpose |
 |---|---|---|
 | **Actuation** | VENTUNO Q (Linux / STM32H5) to Alvik (STM32F411) | Command dispatch and acknowledgement |
-| **Oversight** | VENTUNO Q to UNO R4 WiFi | Liveness reporting, audit attestation, override assertion |
+| **Oversight** | VENTUNO Q to UNO R4 WiFi | Liveness reporting, audit attestation, override assertion, latch relay requests and reports |
 
 Both links share one frame format, one CRC and one parser. They differ in who may say what to whom, and that asymmetry is the governance content of this specification.
 
@@ -75,6 +75,7 @@ A receiver that sees any byte other than 0xA5 at the start of a frame discards b
 |-----------|----------------------|-------------------|
 | 0x30      | SUPERVISOR_HEARTBEAT | VENTUNO Q → R4 |
 | 0x31      | ATTEST_DIGEST        | VENTUNO Q → R4 |
+| 0x32      | LATCH_REQUEST        | VENTUNO Q → R4 |
 
 ### Oversight link: UNO R4 WiFi to VENTUNO Q
 
@@ -83,6 +84,7 @@ A receiver that sees any byte other than 0xA5 at the start of a frame discards b
 | 0xA0      | OVERRIDE_ASSERT  | R4 → VENTUNO Q |
 | 0xA1      | OVERRIDE_CLEAR   | R4 → VENTUNO Q |
 | 0xA2      | ATTEST_ACK       | R4 → VENTUNO Q |
+| 0xA3      | LATCH_REPORT     | R4 → VENTUNO Q |
 
 The R4 implements no decoder for COMMAND_REQUEST. It is not on the actuation path, and leaving those decoders out of `r4-supervisor/ipc_frame.cpp` reduces what that board can be talked into doing.
 
@@ -202,6 +204,29 @@ The R4's live verdict on the last ATTEST_DIGEST.
 | 0      | 8      | audit_ref | uint64: echoed from the digest frame |
 | 8      | 1      | verdict   | see attestation verdict table |
 
+### LATCH_REQUEST (0x32): 9 bytes
+
+A **request**, not a command. The oversight node owns the latch relay and decides. A request to close while an override is latched is refused; a request to open is always honoured, because adding ways to stop is safe and adding ways to start is not.
+
+| Offset | Length | Field     | Notes |
+|--------|--------|-----------|-------|
+| 0      | 8      | audit_ref | uint64: the audit row justifying the request, 0 if none |
+| 8      | 1      | desired   | see latch position table |
+
+### LATCH_REPORT (0xA3): 11 bytes
+
+Sent on every request, on every commanded change, and whenever a poll finds the sources disagreeing.
+
+| Offset | Length | Field       | Notes |
+|--------|--------|-------------|-------|
+| 0      | 1      | commanded   | what the arbiter last asked for |
+| 1      | 1      | reported    | what the module's own MCU says |
+| 2      | 1      | observed    | what the sense pair on the contact says |
+| 3      | 4      | transitions | uint32: commanded state changes this session |
+| 7      | 4      | mismatches  | uint32: polls where the sources disagreed |
+
+Three positions rather than one, because they answer different questions. `reported` comes from the module's microcontroller and most likely echoes the last command it accepted rather than observing the contact. `observed` comes from an antivalent pair of opto-isolated sense channels on the contact and is the source of truth. Their disagreement is the finding: a failed relay, a broken sense channel, or a module misreporting its own state.
+
 ---
 
 ## Reference tables
@@ -246,6 +271,7 @@ Action types 0x10–0x21 are provisional pending arm model selection. Actual joi
 | 0x08  | SYSTEM_FAULT             | STM32H5 in FAULT state |
 | 0x09  | AUDIT_REF_ZERO           | audit_ref is 0 (log-before-act constraint violated) |
 | 0x0A  | OVERSIGHT_OVERRIDE_ACTIVE | The oversight node has an override latched |
+| 0x0B  | LATCH_OPEN               | The motor supply is physically cut at the relay |
 
 ### Halt triggers
 
@@ -265,6 +291,19 @@ Action types 0x10–0x21 are provisional pending arm model selection. Actual joi
 | 0x02  | GOVERNANCE_HEARTBEAT_LOST | No SUPERVISOR_HEARTBEAT within the watchdog window |
 | 0x03  | ATTESTATION_MISMATCH      | Audit digest stream gapped or rewound |
 | 0x04  | REMOTE_CONSOLE            | Override raised on the R4's own Wi-Fi console |
+| 0x05  | LATCH_MISMATCH            | The relay contact is not where it was told to be |
+
+### Latch positions
+
+| Value | Name    | Meaning |
+|-------|---------|---------|
+| 0x00  | OPEN    | Contact open, motor supply cut, HALT enforced physically |
+| 0x01  | CLOSED  | Contact closed, motor supply available |
+| 0x02  | UNKNOWN | Not read yet, or the sense channels are not complementary: cut harness, dead opto, flat battery |
+
+The contact is normally open and wired in series with the motor supply, so OPEN is the safe state and the position an unlatched relay powers up in.
+
+UNKNOWN must never be treated as evidence that the motors are isolated. Both sides implement this: `motor_power_cut` on the arbiter and `motors_isolated` on the governance tier are false before the first reading and false while the observation is UNKNOWN. Neither is allowed to claim safety it has not seen.
 
 ### Attestation verdicts
 
@@ -334,6 +373,24 @@ Confidence is validated independently by both sides. The Linux side applies its 
 
 The heartbeat/watchdog mechanism implements COBIT DSS02 availability control at the hardware layer. If the Linux process hangs, crashes, or is compromised, the STM32H5 transitions to HALTED within one second without any software intervention from the Linux side.
 
+### The latch relay, and why it is a control rather than an assertion
+
+The physical enforcement path is a bistable relay contact in series with the motor supply, driven over the oversight node's own I2C bus. It replaced a GPIO line from the oversight node into the Alvik's kill-switch pin, and the two faults in that arrangement are worth recording because they are easy to repeat.
+
+**It failed open.** Cut power to the board holding the line and the line released, so a power failure at the supervisor un-isolated the motors. A bistable contact holds its position with no coil current, so its state survives losing the board, losing Linux, and a reboot of either.
+
+**It needed the governed component's cooperation.** The line worked only because the Alvik's firmware chose to read that pin. Reflash the Alvik and the control evaporated. That also broke the rule that governance modules do not attach to the governed component, since it made the robot a participant in its own restraint. A contact in the supply asks the Alvik for nothing.
+
+The relay is owned by the oversight node and nothing else can reach it. The governance tier may request a position over `LATCH_REQUEST`, and the arbiter refuses a request to close while an override is latched. There is no message that overrides that refusal.
+
+### Reading a control back, and why two sources
+
+`LATCH_REPORT` carries three positions because a single one would rebuild the problem the report exists to solve.
+
+The module's register is not an observation. Trusting it would put the system back where `stm32_ack` alone leaves it: the component that was asked to stop, reporting that it stopped. The sense pair on the contact is an observation, taken by the arbiter, of a physical thing. It is two channels rather than one so that a broken observation is reported as UNKNOWN rather than as a confident reading of the wrong position, which for a single pin is what a cut wire produces.
+
+When they disagree, the disagreement is more informative than either agreeing with itself, and it latches an override on both sides independently. Neither side is allowed to rely on the other having noticed.
+
 ### Oversight as an independent function
 
 The oversight link exists because the human override used to live inside the system it was meant to override: gesture HALT travelled through the AI perception pipeline, and the kill switch sat on the actuation MCU that the governance node commands. Both were real controls, and both depended on the health of what they supervised.
@@ -342,13 +399,13 @@ Three properties make the R4 independent rather than merely additional:
 
 1. It is not on the command path. It produces no detection and issues no actuation command.
 2. It is reached by its own link, and its state machine accepts no instruction over that link.
-3. Its enforcement does not depend on the link at all. The GPIO kill line into the Alvik holds whether or not the serial connection survives.
+3. Its enforcement does not depend on the link at all. The relay contact in the motor supply holds whether or not the serial connection survives, and holds with no current at all once it has moved.
 
 ### Trust boundary of the oversight link
 
 The oversight serial link is trusted to the extent that the physical USB-C cable is trusted. Anyone who can write to that cable can forge an OVERRIDE_CLEAR and release the governance filter's soft veto. This is tested rather than assumed, in `linux-stack/tests/test_security_oversight.py::TestSerialLinkTrustBoundary`.
 
-That is why there are two enforcement paths. The forged clear reaches the soft veto and nothing else: the kill line is driven from the R4's own latch and no frame on any link can reach it. A control whose limits are undocumented is a control nobody can rely on, so the limit is written here rather than left to be discovered.
+That is why there are two enforcement paths. The forged clear reaches the soft veto and nothing else: the relay is driven from the R4's own latched state, no frame on any link can open or close it directly, and a LATCH_REQUEST asking for the contact to be closed is refused outright while an override stands. A control whose limits are undocumented is a control nobody can rely on, so the limit is written here rather than left to be discovered.
 
 ### Fail-closed on link loss
 
@@ -365,6 +422,7 @@ The protocol has no message type that grants the Linux side direct actuator acce
 - Sign the ATTEST_DIGEST payload with a key held only by the R4. The chain is currently unkeyed: it detects tampering with rows already witnessed, but a host that controls both the database and the link can forge a consistent chain going forward.
 - Decide whether the governance filter should block on ATTEST_ACK before transmitting. It does not today: a GAP or CHAIN_BREAK verdict stops the next command, not the one in flight. Blocking would put the oversight link inside the actuation latency budget, which is the wrong trade for a link whose job is to observe.
 - Define the read-back procedure for retained digests: currently a Wi-Fi console command, which is the least satisfying part of the design.
+- Confirm the ABX00138 exposes a readable state register at all. The protocol treats it as a cross-check and does not depend on it, so a module without one costs nothing but a field in the report.
 - Confirm UART baud rate and hardware flow control once official VENTUNO Q pinout is published
 - Confirm whether the inter-processor bus supports shared memory; if so, evaluate latency vs UART
 - Define the resume sequence for transitioning from HALTED back to ARMED

@@ -22,8 +22,8 @@ Alvik to agree to.
 
 Two sources of truth, deliberately
 ----------------------------------
-`reported` is what the module's own microcontroller says. `observed` is a GPIO
-sense line across the contact.
+`reported` is what the module's own microcontroller says. `observed` comes from
+a sense circuit on the contact itself.
 
 They are kept separate because they answer different questions. The Modulino
 line puts a small MCU behind the I2C interface, so a state register on it most
@@ -36,6 +36,25 @@ So the sense line is the source of truth and the register is a cross-check,
 and a disagreement between them is more informative than either agreeing with
 itself. It means a failed relay, a broken sense line, or a module lying about
 its own state, and all three are worth an audit row.
+
+Why the sense line is two channels and not one
+----------------------------------------------
+A single sense input cannot tell "the contact is here" from "I cannot see the
+contact". Whichever way that pin is wired, one of its two readings is also
+what a broken wire produces, and so one physical position becomes
+indistinguishable from a fault. If that position is OPEN, a cut wire reports
+the motors isolated when nothing is known about them, which is the one claim
+this whole module exists to refuse.
+
+So the observation is **antivalent**: two channels that must disagree with each
+other. One is energised only when the contact is open, the other only when the
+motor rail is live. Complementary readings give OPEN or CLOSED; any other
+combination, including both channels dark after a cut harness or a flat
+battery, gives UNKNOWN. Nothing rounds UNKNOWN up to isolation, so a fault in
+the observation costs availability and never safety.
+
+`SimulatedLatch` models both channels for this reason: the failure worth
+testing is the harness, not the contact.
 """
 
 from __future__ import annotations
@@ -265,8 +284,10 @@ class SimulatedLatch:
     `inject_stuck_contact()` the register and the sense line then disagree,
     which is the fault the two-source read-back exists to find.
 
-    **The sense line can fail.** `inject_sense_failure()` makes it unreadable,
-    and UNKNOWN must never be treated as evidence that the motors are isolated.
+    **The sense line can fail.** The observation is an antivalent pair, so
+    `inject_sense_failure()` breaks one channel and the two stop being
+    complementary, which reads as UNKNOWN rather than as a position. UNKNOWN
+    must never be treated as evidence that the motors are isolated.
     """
 
     def __init__(
@@ -281,7 +302,11 @@ class SimulatedLatch:
         self._register = initial
         self._echoes = register_echoes_command
         self._stuck = False
-        self._sense_failed = False
+        # The two sense channels, independently breakable. Channel A is
+        # energised only while the contact is open, channel B only while the
+        # motor rail is live. A broken channel reads dark.
+        self._sense_a_live = True
+        self._sense_b_live = True
         self.pulses_open = 0
         self.pulses_close = 0
         self.last_pulse_ms: float | None = None
@@ -310,7 +335,18 @@ class SimulatedLatch:
         return self._register
 
     def read_sense(self) -> LatchState:
-        return LatchState.UNKNOWN if self._sense_failed else self._contact
+        """Read the antivalent pair and decode it.
+
+        Complementary channels name a position. Anything else, whether both
+        dark from a cut harness or both lit from a shorted one, is UNKNOWN.
+        """
+        channel_a = self._sense_a_live and self._contact is LatchState.OPEN
+        channel_b = self._sense_b_live and self._contact is LatchState.CLOSED
+        if channel_a and not channel_b:
+            return LatchState.OPEN
+        if channel_b and not channel_a:
+            return LatchState.CLOSED
+        return LatchState.UNKNOWN
 
     # -- Fault injection and inspection --------------------------------
 
@@ -336,9 +372,21 @@ class SimulatedLatch:
     def release_stuck_contact(self) -> None:
         self._stuck = False
 
-    def inject_sense_failure(self) -> None:
-        """The sense line breaks. Observation becomes UNKNOWN."""
-        self._sense_failed = True
+    def inject_sense_failure(self, channel: str = "both") -> None:
+        """Break a sense channel: "a", "b", or both.
+
+        Breaking either one is enough. The pair stops being complementary and
+        the observation becomes UNKNOWN, which is the point of wiring it this
+        way: a fault in the observation is visible as a fault rather than as a
+        confident reading of the wrong position.
+        """
+        if channel not in {"a", "b", "both"}:
+            raise ValueError("channel must be 'a', 'b' or 'both'")
+        if channel in {"a", "both"}:
+            self._sense_a_live = False
+        if channel in {"b", "both"}:
+            self._sense_b_live = False
 
     def repair_sense(self) -> None:
-        self._sense_failed = False
+        self._sense_a_live = True
+        self._sense_b_live = True

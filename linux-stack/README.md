@@ -16,7 +16,7 @@ Python AI pipeline running on the Qualcomm Dragonwing IQ-8275 NPU side of the Ar
 
 This stack has no direct path to actuators. It sends command requests to the STM32 real-time co-processor, which decides whether to execute them.
 
-It also cannot stand its own supervisor down. The oversight node on the UNO R4 WiFi accepts no instruction from here: the protocol contains no message that clears an override, and the R4's kill line into the Alvik is not reachable from any software on this board. Silence from the oversight node is treated as a veto rather than as consent.
+It also cannot stand its own supervisor down. The oversight node on the UNO R4 WiFi accepts no instruction from here: the protocol contains no message that clears an override, and the relay contact the R4 holds in the Alvik's motor supply is not reachable from any software on this board. This board may ask for the contact to be opened, which the R4 always honours; asking for it to be closed is refused while an override stands. Silence from the oversight node is treated as a veto rather than as consent.
 
 Neither is an implementation detail to be optimised away. They are the governance constraint.
 

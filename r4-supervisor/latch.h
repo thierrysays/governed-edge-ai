@@ -10,8 +10,8 @@
  *
  * Two sources of truth, deliberately
  * ----------------------------------
- * `reported` is what the module's own MCU says over I2C. `observed` is a GPIO
- * sense line across the contact.
+ * `reported` is what the module's own MCU says over I2C. `observed` comes
+ * from a sense circuit on the contact itself.
  *
  * They are separate because a state register on the module most likely echoes
  * the last command it accepted rather than observing where the contact sits.
@@ -19,6 +19,14 @@
  * component that was told to stop reporting that it stopped. The sense line
  * is the truth, the register is a cross-check, and a disagreement between
  * them means a failed relay, a broken sense line, or a module lying.
+ *
+ * The observation is antivalent: two channels that must disagree with each
+ * other, one energised only while the contact is open and the other only
+ * while the motor rail is live. A single channel could not tell a position
+ * from a cut wire, and one of the positions it would confuse with a fault is
+ * OPEN, which reads as "the motors are isolated". Any non-complementary pair
+ * is LATCH_UNKNOWN, and nothing here rounds that up to isolation. The wiring
+ * is in r4_supervisor.ino; this file only ever sees the decoded position.
  *
  * Pure logic: no Arduino headers, no I2C calls, no time source of its own.
  * The caller supplies a LatchIo with the four operations that touch hardware,

@@ -230,8 +230,8 @@ Classes: **A** load-bearing · **B** substantive but contained · **C** document
 
 | # | Element | Target | Repo at v2.0.0 | Class | Section |
 |---|---|---|---|---|---|
-| D1 | Physical enforcement | Bistable latch relay in motor power, I2C from the R4 | Live GPIO into the Alvik kill pin | **A** | 6 |
-| D2 | Governance bus host | The R4, which neither decides nor is governed | R4 wired to the Alvik | **A** | 3, 5 |
+| D1 | Physical enforcement | Bistable latch relay in motor power, I2C from the R4 | **Closed at step 11.** Relay driver, protocol, mock and firmware port shipped | **A** | 6 |
+| D2 | Governance bus host | The R4, which neither decides nor is governed | **Closed at step 11** for the relay; Distance and Movement remain at step 15 | **A** | 3, 5 |
 | D3 | Perception location | VENTUNO Q, alongside the GovernanceFilter | UNO Q, sent over TCP | **A** | 8 |
 | D4 | UNO Q role | Witness; disagreement forces HALT | Primary perception node | **A** | 8 |
 | D5 | Human override | E-STOP / ARM / ACK on the R4 | Override + clear on the R4 | **B** | 3 |
@@ -243,7 +243,7 @@ Classes: **A** load-bearing · **B** substantive but contained · **C** document
 | D11 | STM32H5 firmware | Zephyr, < 1 ms arbiter | `rt-control/` empty; only `MockSTM32H5` | **A** | 12 |
 | D12 | Audit storage | M.2 NVMe, separate from OS | Local SQLite | **C** | config |
 | D13 | UNO Q ↔ VENTUNO Q | Ethernet 2.5 Gb | TCP over Wi-Fi | **C** | docs |
-| D14 | Cameras | IMX219 ×2, MIPI CSI. **Sourced**: Kubii 8 MP module for Raspberry Pi | "Still to source", no Arduino-native CSI confirmed | **C** | 7.1 |
+| D14 | Cameras | IMX219 ×2, MIPI CSI. **Sourced**: Kubii 8 MP module for Raspberry Pi | **Closed at step 10.** BOM, README and build log corrected | **C** | 7.1 |
 | D15 | Modulino Hub + Buttons, Pixels, Buzzer | **Removed**, redundant with the R4 | Absent | **C** | 3 |
 
 ### 7.1 Cameras: sourced, and what the specification implies
@@ -434,8 +434,8 @@ Each step is independently reviewable and leaves the tree green.
 
 | Step | Work | Class | Depends on | Effort |
 |---|---|---|---|---|
-| 10 | Docs: publish this reconciliation, reclassify the R4, correct the delta | C | none | S |
-| 11 | Latch relay driver, protocol and mock; retire the Alvik-side kill line | A | none | M |
+| 10 | Docs: publish this reconciliation, reclassify the R4, correct the delta | C | none | S. **Done** |
+| 11 | Latch relay driver, protocol and mock; retire the Alvik-side kill line | A | none | M. **Done** |
 | 12 | R4 as governance bus owner: Qwiic I2C layer, third button, ALLOW/GATED/HALT glyphs | A | 11 | M |
 | 13 | Nesso N1: verdict stream, display, signed lift, key pairing | A | 11, 12 | L |
 | 14 | Audit journal signing, countersigned by the Nesso | A | 13 | M |
@@ -448,6 +448,8 @@ Steps 10 to 16 are testable hardware-free on the existing pattern: real state ma
 With the arbiter staying on the R4, step 17 is no longer on the critical path. It went from blocking the architecture to being an optimisation of the motor-side timing, which is the main practical gain from that decision.
 
 **One addition to the test strategy.** The GPIO line failing open on power loss was invisible because the mocks model logic, not electricity. The latch relay mock should model a power cycle explicitly, and a test should assert that the latch state survives one. Bugs of that class are found by modelling the failure, not by more coverage.
+
+*Done at step 11, and it paid a second time.* Modelling the contact as an electrical thing rather than a boolean is what made the question "what does the sense line read when its wire is cut" askable at all. The answer was OPEN, which the arbiter would have reported as *the motors are isolated*. The observation is now an antivalent pair whose every failure decodes to UNKNOWN, and `SimulatedLatch` models both channels for the same reason: the failure worth testing is the harness, not the contact.
 
 ---
 
@@ -549,7 +551,7 @@ The overlap also pays for itself as a free self-test: an object in the shared we
 | Item | Default | Why it is not just a preference |
 |---|---|---|
 | Witness model | Different family, recall-tuned; classical floor plus small CNN | The veto is asymmetric, so over-detection costs availability and under-detection costs safety |
-| Latch read-back | GPIO sense line primary, I2C register secondary | A register on the module's MCU most likely echoes the command, which is the error the read-back exists to eliminate |
+| Latch read-back | Antivalent opto-isolated sense pair primary, I2C register secondary | A register on the module's MCU most likely echoes the command, which is the error the read-back exists to eliminate. Two channels rather than one because a single pin makes a cut wire look like a position, and one of the positions it mimics is "isolated". |
 | Proof of stop | ToF on the R4, plus a `no_observation` audit state | The sensor's 1.3 m range means the control stops existing rather than degrading; that must be on the record |
 | Camera splay | 52° between axes, ~114° coverage, ~10° overlap | Mounting tolerance turns a zero-overlap seam into a blind wedge straight ahead; the overlap doubles as a camera self-test |
 

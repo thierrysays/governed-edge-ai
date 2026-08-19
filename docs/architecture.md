@@ -1,9 +1,11 @@
 # governed-edge-ai: Architecture & Functional Specification
 
-**Version:** 2.0, 2026-08-19
-**Status:** Steps 1 to 9 fully implemented and tested. Four boards, two links, 611 tests, 100% line coverage.
+**Version:** 3.0, 2026-08-19
+**Status:** Steps 1 to 11 implemented and tested. Five boards, two links, 703 tests, 100% line coverage on both modules.
 
-**What changed in 2.0:** the addition of an Arduino UNO R4 WiFi as an independent oversight node (Tier 0), and everything that followed from it: a second IPC link, an audit attestation hash chain, two new governance invariants, a new `oversight` actor in the audit schema, and a C++ firmware whose state machine is held to a Python reference model by a parity test suite.
+**What changed in 3.0.** Physical enforcement moved from a GPIO line into the Alvik's kill-switch pin to a bistable latch relay in the motor supply, owned by the oversight node. The reconciliation in `docs/architecture-reconciliation.md` explains why: the line failed open on power loss, and it worked only because the governed board chose to read the pin, which made the robot a participant in its own restraint. The Arduino Nesso N1 joins as the out-of-band operator console, and the target board count is five.
+
+**What changed in 2.0.** The Arduino UNO R4 WiFi as an independent oversight node (Tier 0), a second IPC link, an audit attestation hash chain, two new governance invariants, an `oversight` actor in the audit schema, and a C++ firmware held to a Python reference model by a parity suite.
 
 ---
 
@@ -23,13 +25,14 @@
    - 4.8 SupervisorLink
    - 4.9 MockR4Supervisor
    - 4.10 R4 Supervisor Firmware
+   - 4.11 Latch Relay
 5. [IPC Protocol Specification](#5-ipc-protocol-specification)
 6. [Audit Data Model](#6-audit-data-model)
 7. [Governance Contract](#7-governance-contract)
 8. [Sequence Diagrams](#8-sequence-diagrams)
 9. [Configuration & Deployment](#9-configuration--deployment)
 10. [Test Architecture](#10-test-architecture)
-11. [Completed Implementation (Steps 7 to 9)](#11-completed-implementation-steps-7-to-9)
+11. [Completed Implementation (Steps 7 to 11)](#11-completed-implementation-steps-7-to-11)
 12. [Threat Model and Limits](#12-threat-model-and-limits)
 13. [Remaining Open Decisions](#13-remaining-open-decisions)
 
@@ -45,16 +48,21 @@
 Invariant A, log before act:
   ∀ actuation: ∃ audit_ref ≥ 1  such that  log_event(audit_ref) precedes  transmit(CommandRequest)
 
-Invariant B, witness before act:
+Invariant B, enforcement outlives its enforcer:
+  the motor supply passes through a bistable contact whose position survives
+  loss of power at every board and a reboot of the decision host, and which
+  the governed component has no interface to
+
+Invariant C, witness before act:
   ∀ actuation: publish(digest_n) precedes transmit(CommandRequest)
   where digest_n = SHA-256(digest_{n-1} ‖ canonical(row_n)) and the digest is
   retained on a board outside the governance host
 
-Invariant C, oversight is not revocable by its subject:
+Invariant D, oversight is not revocable by its subject:
   ∄ message m in the protocol such that governance_tier.send(m) clears an override
 ```
 
-The STM32 co-processor on the actuation side enforces Invariant A by rejecting any `CommandRequest` frame where `audit_ref == 0`. The UNO R4 WiFi oversight node enforces B by retaining digests off-host, and C by exposing no inbound message that releases its latch. All three constraints are structural, not procedural.
+The STM32 co-processor on the actuation side enforces Invariant A by rejecting any `CommandRequest` frame where `audit_ref == 0`. The latch relay enforces B, and it is the only one of the four that holds with every processor in the system switched off. The UNO R4 WiFi oversight node enforces C by retaining digests off-host, and D by exposing no inbound message that releases its latch. All four constraints are structural, not procedural.
 
 ### Why a fourth board
 
@@ -75,6 +83,8 @@ The UNO R4 WiFi is the answer to that. It is not on the command path, it is reac
 | 7 | `alvik-firmware/` | Alvik firmware: four governance gates, motor mapping, kill-switch GPIO |
 | 8 | `linux-stack/perception/uno_q_service.py` | UNO Q perception service: camera, models, TCP transport |
 | 9 | `linux-stack/oversight/`, `r4-supervisor/` | Oversight tier: attestation chain, supervisor link, R4 firmware |
+| 10 | `docs/architecture-reconciliation.md` | Reconciliation of the published governance chain with the codebase |
+| 11 | `oversight/latch.py`, `r4-supervisor/latch.*` | Latch relay: physical enforcement in the motor supply |
 
 ---
 
@@ -87,9 +97,28 @@ The UNO R4 WiFi is the answer to that. It is not on the command path, it is reac
 | **Arduino UNO Q 4GB** | Qualcomm QRB2210 (quad-core Cortex-A53, 2 GHz) | STM32U585 (Cortex-M33, 160 MHz) | Dual ISP 13 MP / 30 fps, 4 GB LPDDR4, 32 GB eMMC, Wi-Fi 5, BT 5.1 | Perception node |
 | **Arduino VENTUNO Q** | Qualcomm IQ-8275 NPU (40 TOPS, Cortex-A55) | STM32H5 (Cortex-M33, 250 MHz) | 16 GB LPDDR5, Wi-Fi 6E, BT 5.3 | Governance brain |
 | **Arduino Alvik** | ESP32-S3 (Xtensa LX7, 240 MHz) | STM32F411RC (Cortex-M4, 100 MHz) | ToF 8×8 (VL53L7CX, 350 cm), IMU 6-axis (LSM6DSOX), colour (APDS-9660), 18650 battery, LEGO connector | Physical body |
-| **Arduino UNO R4 WiFi** | Renesas RA4M1 (Cortex-M4, 48 MHz) | ESP32-S3 (Wi-Fi and BLE co-processor) | 12x8 LED matrix, 32 KB SRAM, 256 KB flash, Qwiic, DAC, CAN | Oversight node |
+| **Arduino UNO R4 WiFi** | Renesas RA4M1 (Cortex-M4, 48 MHz) | ESP32-S3 (Wi-Fi and BLE co-processor) | 12x8 LED matrix, 32 KB SRAM, 256 KB flash, Qwiic, DAC, CAN | Safety arbiter |
+| **Arduino Nesso N1** | Espressif ESP32-C6 (RISC-V, 160 MHz) | integrated radios | 1.14" 240x135 touchscreen, 512 KiB RAM, 16 MiB flash, Wi-Fi 6 / BLE 5.3 / 802.15.4 / LoRa, IMU, 250 mAh battery | Out-of-band operator console |
 
-All four boards are owned. No external actuator required beyond Alvik's built-in drivetrain. The R4 needs two momentary buttons and four jumper wires; `docs/deployment-guide.md` Part 1 has the list.
+### Modules on the arbiter's Qwiic bus
+
+| Module | Part | Role |
+|---|---|---|
+| Modulino Latch Relay | ABX00138, HFE60/3-1HT-L2 | Bistable contact in series with the motor supply. I2C 0x2A, 50 ms SET/RESET pulses. **The physical enforcement path.** |
+| Modulino Distance | ABX00102, ToF VL53L4CD | Safety envelope outside the vision pipeline, and proof of stop |
+| Modulino Movement | ABX00101, IMU LSM6DSOX | Proof of stop, reserved. See the reconciliation, section 3.1. |
+
+They hang off the **arbiter**, not the decision host. `docs/architecture-reconciliation.md` section 3 gives the reasoning: the VENTUNO Q runs the models, the filter and the journal, so it is the revocable path, and controls meant to survive it should not share its I2C segment.
+
+All five boards are owned. `docs/deployment-guide.md` Part 1 has the parts list.
+
+### Why the R4 is the arbiter, and not the STM32H5
+
+The diagram this architecture reconciles with makes the VENTUNO Q's STM32H5 the safety arbiter, and it has the better timing for it. The role sits on the R4 instead, for a reason easy to miss.
+
+The STM32H5 is out of the Linux path, which is not the same as being off the decision host. It shares a PCB, a power rail and in all likelihood a reset domain with the process it arbitrates over. That separation is a firmware boundary. The R4 is a separate board with separate power, so its separation is physical and can be checked by looking at the wiring.
+
+The trade is real: arbitration on the R4 gives up the tightest achievable timing on the human and latch path. For this project the verifiable property is worth more than the microseconds. The STM32H5 keeps whatever sub-millisecond motor-side work it turns out to be needed for, and the architecture stops being blocked on a pinout that has been unpublished since the first commit.
 
 ### Why the R4 is the right board for this role
 
@@ -100,8 +129,9 @@ Not because it is the most capable board on the bench. Because it is the least.
 | 48 MHz, 32 KB SRAM, no OS | The whole firmware is a few hundred lines of C++ with no scheduler, no filesystem and no network stack in the default build. Small enough to read in one sitting, which is what an oversight function should be. |
 | 12x8 LED matrix on board | Governance state is legible from across a room without a screen or a laptop. |
 | Native USB-C serial | Same link discipline as the other two, no extra adapter. |
-| GPIO with nothing else on it | D3 drives the Alvik kill-switch input directly. No bus arbitration, no driver, no software in the path. |
+| Qwiic and spare GPIO with nothing else on them | The relay hangs off the arbiter's own I2C bus, and two plain inputs read the contact back. No bus arbitration with anything else, no driver, no software between the button and the coil. |
 | Wi-Fi available but optional | A remote console exists and is off by default. An oversight node with fewer network surfaces is a better oversight node. |
+| A Qwiic connector | The latch relay and the evidence modules sit on the arbiter's own I2C bus, out of reach of the decision host |
 
 An oversight function running on the most powerful board in the system would be the wrong shape. The argument here is that the supervisor should be simpler than the supervised, so that its correctness is checkable by inspection.
 
@@ -128,8 +158,8 @@ An oversight function running on the most powerful board in the system would be 
                               └───────────┬──────────────┘  └──────────▲───────────┘
                                           │                            │
                                           └────────────────────────────┘
-                                            D3 hard kill line, GPIO
-                                            no software in the path
+                                            latch relay in the motor
+                                            supply, no software in the path
 ```
 
 **UNO Q to VENTUNO Q:** length-prefixed JSON over TCP, port 9100.
@@ -138,7 +168,9 @@ An oversight function running on the most powerful board in the system would be 
 
 **VENTUNO Q to UNO R4 WiFi:** USB-C serial, the same binary frame format as the Alvik link with a different message set.
 
-**UNO R4 WiFi to Alvik:** a GPIO line, D3 to D4, active low, with a common ground. This is the only connection in the system that carries no protocol. It exists precisely so that one enforcement path survives the failure or compromise of every other one.
+**UNO R4 WiFi to the motor supply:** a bistable relay contact in series, driven over the arbiter's Qwiic bus at I2C 0x2A, with an antivalent opto-isolated sense pair observing the contact on D3 and D5. This is the only enforcement in the system that carries no protocol and needs no processor to hold its state.
+
+**VENTUNO Q to Nesso N1:** Wi-Fi 6. Verdict stream out, signed HALT lift back.
 
 ### The two enforcement paths
 
@@ -147,9 +179,16 @@ The oversight node can stop the rig two ways, and the difference is the whole re
 | Path | Mechanism | Survives |
 |---|---|---|
 | Soft veto | `OVERRIDE_ASSERT` over serial; the `GovernanceFilter` stops transmitting | A hung or misbehaving perception tier |
-| Hard line | D3 into the Alvik kill-switch input; the Alvik firmware refuses every command | A compromised governance host, a cut oversight cable, a forged `OVERRIDE_CLEAR` |
+| Physical | Bistable contact opened in the motor supply | A compromised governance host, a cut oversight cable, a forged `OVERRIDE_CLEAR`, a reflashed Alvik, loss of power at every board |
 
-The soft veto's trust boundary is the physical USB-C cable, and anyone who can write to that cable can forge a clear. This is tested rather than assumed, in `TestSerialLinkTrustBoundary`. The hard line is not reachable from any link.
+The soft veto's trust boundary is the physical USB-C cable, and anyone who can write to that cable can forge a clear. This is tested rather than assumed, in `TestSerialLinkTrustBoundary`. The relay is not reachable from any link, and the governance tier's only access to it is a request the arbiter may refuse.
+
+**What the relay replaced, and why.** Until step 11 the physical path was a GPIO line from the arbiter into the Alvik's kill-switch pin. Two faults, both recorded here because both are easy to repeat:
+
+- It **failed open.** Cut power to the arbiter and the line released, so a power failure at the supervisor un-isolated the motors. No test caught it, because the mocks modelled a state machine and had no power to lose. `TestBistability` in `test_latch.py` is that missing test.
+- It needed the **governed component's cooperation.** The line worked only because the Alvik's firmware chose to read the pin, so reflashing the Alvik defeated it. It also put a governance module on the governed component, which the design rule in section 3 forbids for exactly this reason.
+
+A contact in the supply has neither fault. It holds with no coil current, and the Alvik has nothing to agree to.
 
 ---
 
@@ -171,13 +210,15 @@ Tier 0 is numbered zero deliberately. It is not the first step in the pipeline; 
 │    └─ retained digest ring (64 entries, off the governance host)     │
 │                                                                      │
 │  Outbound to Tier 2:    OVERRIDE_ASSERT / OVERRIDE_CLEAR / ATTEST_ACK│
-│  Outbound to Tier 3:    D3 kill line, GPIO, no protocol              │
-│  Operator surface:      12x8 LED matrix, clear button                │
+│                         LATCH_REPORT: commanded, reported, observed  │
+│  Physical:              latch relay in the motor supply (I2C 0x2A)   │
+│                         + antivalent sense pair (D3, D5)             │
+│  Operator surface:      12x8 LED matrix, E-STOP / ARM / ACK buttons  │
 │                                                                      │
 │  Accepts no instruction from Tier 2. Releasing an override is a      │
 │  physical act at this board.                                         │
 └───────────▲──────────────────────────────────────────────┬───────────┘
-            │ heartbeat + digests                          │ veto + kill line
+            │ heartbeat + digests                          │ veto + motor supply
             │                                              ▼
 ┌──────────────────────────────────────────────────────────────────────┐
 │  TIER 1: PERCEPTION  (UNO Q 4GB, Qualcomm QRB2210 Linux)           │
@@ -216,7 +257,7 @@ Tier 0 is numbered zero deliberately. It is not the first step in the pipeline; 
 │  STM32F411 receives CommandRequest                                   │
 │    ├─ validate audit_ref ≠ 0                                         │
 │    ├─ validate confidence ≥ threshold (float32 gate)                │
-│    ├─ check kill-switch GPIO state (driven by Tier 0's D3 line)     │
+│    ├─ check kill-switch GPIO (local test input, not a governance control) │
 │    ├─ if valid: execute motor command, return CommandAck             │
 │    └─ if invalid: return CommandReject(reason)                      │
 │                                                                      │
@@ -509,7 +550,8 @@ The override latches. It does not lapse when its cause goes away, and no inbound
 
 | Property | Behaviour |
 |---|---|
-| `kill_line_asserted` | True while an override is latched, and also before the first heartbeat ever arrives. The board comes up holding the line, releases it on first contact, and needs no arming step. |
+| `halt_intended` | True while an override is latched, and before the first heartbeat ever arrives. Intent: what the node wants. |
+| `motor_power_cut` | True only when the sense line has been **observed** showing the contact open. False before the first poll and false while the observation is UNKNOWN. Never claims safety it has not seen, and differing from `halt_intended` is exactly when something is wrong. |
 | `annunciator` | `WATCHING`, `OVERRIDE`, `STALE` or `ATTEST`: the 12x8 matrix glyph |
 | `retained_digests` | Ring of 64 `(audit_ref, digest)` pairs, oldest evicted first. Models the R4's limited memory. |
 | First reason wins | A later trigger does not relabel the record of what actually stopped the rig |
@@ -522,16 +564,67 @@ The override latches. It does not lapse when its cause goes away, and no inbound
 
 | File | Contents |
 |---|---|
-| `r4_supervisor.ino` | Pins, LED matrix glyphs, serial I/O, optional Wi-Fi console |
+| `r4_supervisor.ino` | Pins, LED matrix glyphs, serial and I2C, optional Wi-Fi console |
 | `supervisor_state.h` / `.cpp` | The state machine. No Arduino headers: pure logic, host-compilable. |
+| `latch.h` / `.cpp` | Latch relay driver. Also host-compilable: the hardware is injected as four function pointers. |
 | `ipc_frame.h` / `.cpp` | IPC codec, oversight subset only |
-| `test/parity_harness.cpp` | Host driver exposing the two logic files over a line protocol |
+| `test/parity_harness.cpp` | Host driver exposing the three logic files over a line protocol |
 
 **No `COMMAND_REQUEST` decoder exists on this board.** It is not on the actuation path, and the absence is deliberate.
 
-**How correctness is established.** The sketch cannot run in CI, but everything that decides behaviour is plain C++ with no Arduino headers. `linux-stack/tests/test_r4_firmware_parity.py` compiles those two files for the host with `-Wall -Wextra -Werror` and checks them against the Python reference model: byte-identical frames, identical verdict sequences, identical state transitions, identical constants. Two implementations of one state machine drift unless something checks them.
+**How correctness is established.** The sketch cannot run in CI, but everything that decides behaviour is plain C++ with no Arduino headers. `linux-stack/tests/test_r4_firmware_parity.py` compiles those three files for the host with `-Wall -Wextra -Werror` and checks them against the Python reference model: byte-identical frames, identical verdict sequences, identical state transitions, identical constants. Two implementations of one state machine drift unless something checks them.
 
-What that does not cover: the Arduino layer itself. Pin behaviour, the LED matrix driver, Wi-Fi, and `Serial` timing at 921600 baud need the board. See section 12.
+What that does not cover: the Arduino layer itself. Pin behaviour, the LED matrix driver, Wi-Fi, I2C bus timing and `Serial` at 921600 baud need the board. See section 12.
+
+---
+
+### 4.11 Latch Relay (`linux-stack/oversight/latch.py`, `r4-supervisor/latch.*`)
+
+The physical enforcement path: a bistable contact in series with the motor supply, owned by the arbiter.
+
+**`LatchState`**: `OPEN` (supply cut, HALT enforced), `CLOSED` (supply available), `UNKNOWN` (not read, or unreadable).
+
+**`LatchRelay`**: `enforce_halt()`, `permit()`, `poll()`, `poll_if_due()`. Both commands are idempotent and both read back immediately, because a command whose effect is never checked is the assertion this class exists to replace.
+
+**`LatchReading`** carries three positions, and the reason is the core of the design:
+
+| Field | Source | Trust |
+|---|---|---|
+| `commanded` | The arbiter's own record | What was intended |
+| `reported` | The module's I2C register | A cross-check. Most likely echoes the last command rather than observing the contact. |
+| `observed` | Antivalent opto pair on the contact and the motor rail | The source of truth |
+
+`agrees` is true only when all three match and the observation is usable. `enforcing` reads from `observed` alone, and is false when the observation is `UNKNOWN`: an unreadable sense line is not evidence that the motors are isolated, and rounding it up to one would be the exact error the read-back exists to prevent.
+
+#### Why the observation takes two channels
+
+A single sense input cannot distinguish a contact position from a cut wire. Whichever way one pin is arranged, one of its two readings is also what a broken wire produces, so one physical position becomes indistinguishable from a fault, and if that position is OPEN the arbiter reports the motors isolated while knowing nothing about them. That is the one claim this subsystem exists to refuse, and in the first implementation of step 11 it was the default failure mode.
+
+The observation is therefore **antivalent**: two opto-isolated channels that must disagree with each other.
+
+| Channel | Energised when | Arbiter pin |
+|---|---|---|
+| A, "the contact is open" | The LED across the contact sees the full battery, which happens only while the contact is open | D3, `INPUT_PULLUP` |
+| B, "the motor rail is live" | The LED across the rail is lit, which happens only while the contact is closed | D5, `INPUT_PULLUP` |
+
+| A | B | Decoded |
+|---|---|---|
+| Lit | Dark | `OPEN` |
+| Dark | Lit | `CLOSED` |
+| Dark | Dark | `UNKNOWN`: cut harness, dead opto, flat battery |
+| Lit | Lit | `UNKNOWN`: shorted harness |
+
+Every fault in the observation therefore lands in `UNKNOWN`, which nothing rounds up to isolation. The cost is availability: a broken sense wire stops the rig. That is the correct direction for this trade.
+
+Opto isolation is not incidental. It removes the shared ground the earlier GPIO line depended on, and with it the one failure that design admitted it could not detect for itself.
+
+**One residual property, stated rather than hidden.** Only the energised channel is under test at any instant, so a break in the dark one is latent until the contact next moves. It surfaces on the next transition, because every command reads back. This is a second reason the pair is polled rather than edge-driven.
+
+**Ownership.** The governance tier sends `LATCH_REQUEST` and the arbiter decides. A request to close while an override is latched is refused, and no message exists that changes that. A request to open is always honoured: adding ways to stop is safe, adding ways to start is not.
+
+**Polling, not interrupts.** A contact that silently fails to move raises no edge. Only a poll finds it, so the arbiter reads the sense line every 100 ms and a disagreement latches an override on both sides independently.
+
+**`SimulatedLatch`** models a contact rather than a boolean, and models three things because each is load-bearing: bistability across `power_cycle()`, a register that can lie via `inject_stuck_contact()`, and an antivalent sense pair whose channels break independently via `inject_sense_failure("a" | "b" | "both")`. The first of those is the test that could not have existed before step 11, because the earlier mocks had no power to lose.
 
 ---
 
@@ -807,7 +900,8 @@ Perception   GovernanceFilter   SupervisorLink   R4 node      AuditLogger   Alvi
                                           [operator presses the button]
                                                      │
                                    OVERRIDE_ASSERT   │
-                                  ◄──────────────────│  (and D3 kill line asserts)
+                                  ◄──────────────────│  (contact opened first,
+                                                     │   then announced)
      │             │                    │            │
      │ Detection   │                    │            │
      │  0.99       │                    │            │
@@ -826,7 +920,7 @@ Perception   GovernanceFilter   SupervisorLink   R4 node      AuditLogger   Alvi
      │             │───────────────────►│───────────►│
      │             │                                 │
      │      [NO CommandRequest transmitted]                      │
-     │      [the Alvik would refuse it anyway: D3 is held]       │
+     │      [and the motors have no supply either way]           │
 ```
 
 ### 8.6 Attestation gap flow
@@ -846,7 +940,7 @@ GovernanceFilter    SupervisorLink        R4 node
       │                   │─────────────────►│  4 > 1+1 → GAP
       │                   │◄─────────────────│  ATTEST_ACK(4, GAP)
       │                   │◄─────────────────│  OVERRIDE_ASSERT(ATTESTATION_MISMATCH)
-      │                   │                  │  annunciator → ATTEST, D3 asserts
+      │                   │                  │  annunciator → ATTEST, contact opens
       │ poll() → True     │                  │
       │◄──────────────────│                  │
    [the next frame is suppressed; the one already in flight is not recalled]
@@ -865,8 +959,8 @@ GovernanceFilter    SupervisorLink        R4 node                Alvik
                           │        2 s elapse, no heartbeat         │
                           │                  │  latch OVERRIDE      │
                           │                  │  annunciator → STALE │
-                          │                  │  D3 kill line ───────►  every command
-                          │◄─────────────────│  OVERRIDE_ASSERT        now refused
+                          │                  │  contact opened ─────►  motor supply
+                          │◄─────────────────│  OVERRIDE_ASSERT        cut
                           │                  │
    [restarting the service does not clear it: the override latched,
     and clearing is a physical act at the oversight node]
@@ -942,7 +1036,7 @@ python3 -m governance.ventuno_q_service \
 
 `--supervisor none` runs the three-board configuration. The service logs a warning on that path: command dispatch has no independent veto and audit rows are not witnessed off-host. It is the arrangement the R4 was added to correct, not a supported deployment.
 
-**A step-by-step guide, written for a first-time reader and starting from an unconfigured machine, is in `docs/deployment-guide.md`.** It covers the bill of materials, flashing both firmwares, wiring the kill line, systemd units, and a seven-test verification procedure for the governance controls.
+**A step-by-step guide, written for a first-time reader and starting from an unconfigured machine, is in `docs/deployment-guide.md`.** It covers the bill of materials, flashing both firmwares, wiring the latch relay into the motor supply, systemd units, and a verification procedure for the governance controls.
 
 ### Channel configuration
 
@@ -989,12 +1083,12 @@ Recovering `digests` from a running board currently means the Wi-Fi console, whi
 ### Overview
 
 ```
-611 tests total · 100% line coverage on both modules · hardware-free
+703 tests total · 100% line coverage on both modules · hardware-free
 ```
 
 | Module | Tests | Coverage |
 |---|---|---|
-| linux-stack | 512 | 100% |
+| linux-stack | 604 | 100% |
 | audit-service | 99 | 100% |
 
 All tests run without physical hardware. `MockSTM32H5` provides the actuation MCU via a Unix pty; `MockR4Supervisor` provides the oversight node the same way. Both are real implementations of their state machines rather than stubs, so the software path exercised in CI is the one that runs on the rig.
@@ -1023,9 +1117,11 @@ The coverage gate is `--cov-fail-under=98` on both modules. Entry-point guards (
 | `test_oversight_governance.py` | 19 | integration | Invariants 7 and 8 end to end, against real ptys and a real database |
 | `test_oversight_faults.py` | 23 | unit | Pulled cables, dead descriptors, chain faults, resynchronisation |
 | `test_security_oversight.py` | 21 | security | Adversarial: four threat positions, see below |
-| `test_r4_firmware_parity.py` | 42 | integration | The compiled C++ firmware against the Python reference model |
-| `test_smoke_oversight.py` | 8 | smoke | Four-board path: accept, veto, reconcile, tamper, fail closed |
+| `test_r4_firmware_parity.py` | 59 | integration | The compiled C++ firmware against the Python reference model, plus text guards on the sketch glue the harness cannot drive |
+| `test_smoke_oversight.py` | 8 | smoke | The running path end to end: accept, veto, reconcile, tamper, fail closed |
 | `test_coverage_completion.py` | 24 | unit | Error and hardware-only branches the rest of the suite leaves untouched |
+| `test_latch.py` | 38 | unit, regression | The relay driver: bistability across a power cycle, a lying register, the antivalent sense pair and its latent-fault case, cadence |
+| `test_latch_integration.py` | 29 | integration | Ownership and refusal, mismatch handling, and what each side may believe about isolation |
 | `test_oversight.py` (audit) | 19 | unit | The `oversight` actor, and `fetch_event()` |
 | `test_dashboard_db.py` (audit) | 8 | unit | The dashboard's real connection path, not the overridden one |
 
@@ -1056,13 +1152,15 @@ assert row["stm32_ack"] == 0     # MCU gate caught the float32 rounding
 | Position | Tested |
 |---|---|
 | T1, a compromised governance host | No message it can send clears an override. The whole outbound vocabulary is thrown at a latched node, including replayed R4 messages. |
-| T2, an attacker on the oversight cable | A forged `OVERRIDE_CLEAR` *does* release the soft veto. The hard kill line is unaffected, and the Alvik still refuses. |
+| T2, an attacker on the oversight cable | A forged `OVERRIDE_CLEAR` *does* release the soft veto. The relay is unaffected: the whole outbound vocabulary thrown at a latched contact leaves it open. |
+| T5, the latch relay itself | A stuck contact, a lying module register, either sense channel broken, a shorted or dark sense pair, a contact that drifts with no edge, and power cut to the arbiter. All detected or survived, and none of them reads as isolation. |
 | T3, a compromised host with database write access | Edits, deletions, backdating and verbatim reinsertion are each detected against the retained digests. An unwitnessed database is shown to verify clean, which is why the digests live elsewhere. |
 | T4, malformed or hostile input | Oversized length headers, random bytes, corrupt CRCs, SQL in a detection label, separator injection into the canonical row rendering. |
+| T5, the latch relay | The whole outbound vocabulary thrown at a latched contact, a forged `LATCH_REPORT`, a module lying about its own position, a reflashed Alvik, and power cut to the arbiter. |
 
 The T2 tests exist to document a limit rather than to demonstrate a strength. A control whose limits are undocumented is a control nobody can rely on.
 
-**Firmware parity** (`test_r4_firmware_parity.py`): compiles `r4-supervisor/supervisor_state.cpp` and `ipc_frame.cpp` for the host with `-Wall -Wextra -Werror`, drives them through a line-protocol harness, and checks byte-identical frames, identical verdict sequences, identical state transitions and identical constants against the Python model. Skips with a stated reason when no compiler is present.
+**Firmware parity** (`test_r4_firmware_parity.py`): compiles `r4-supervisor/supervisor_state.cpp`, `ipc_frame.cpp` and `latch.cpp` for the host with `-Wall -Wextra -Werror`, drives them through a line-protocol harness, and checks byte-identical frames, identical verdict sequences, identical state transitions and identical constants against the Python model. Skips with a stated reason when no compiler is present.
 
 **Kill-switch reject**: uses `MockSTM32H5.trigger_kill_switch()`:
 
@@ -1076,9 +1174,9 @@ assert row["stm32_ack"] == 0     # MCU rejected (KILL_SWITCH_ACTIVE)
 
 ---
 
-## 11. Completed Implementation (Steps 7 to 9)
+## 11. Completed Implementation (Steps 7 to 11)
 
-All nine build steps are complete. This section records what was implemented and the decisions taken.
+Eleven build steps complete. This section records what was implemented and the decisions taken.
 
 ### Step 7: Alvik firmware (`alvik-firmware/`)
 
@@ -1150,6 +1248,24 @@ All nine build steps are complete. This section records what was implemented and
 | `FrameParser` had no maximum-frame guard | One corrupt or hostile length header wedged a link permanently: every later frame was swallowed waiting for bytes that never came | Discard the magic byte and resynchronise when the length exceeds `MAX_PAYLOAD`. Regression tests in `TestOversizedLengthGuard`. |
 | A failed `channel.write()` left a row reading `command_sent=1` | The audit log claimed a command was sent that never reached the wire | Catch `OSError` and `flag_event()` with the error. The log is append-only, so flagging is the only honest correction available. |
 
+### Step 10: Reconciliation (`docs/architecture-reconciliation.md`)
+
+The published governance chain diagram and the codebase had diverged into two different architectures. Step 10 mapped one onto the other, settled the target as five boards with the Modulino Hub cluster removed, and recorded every delta with a migration path. It also produced the two findings that step 11 acts on, and the extended design rule in section 3: governance modules attach to a board that neither decides nor is governed.
+
+### Step 11: Latch relay (`oversight/latch.py`, `r4-supervisor/latch.*`)
+
+**Decisions taken:**
+
+- **Bistable contact in the motor supply, replacing the GPIO line.** The reasoning is in section 2 and section 4.11. The short form: the old line failed open on power loss and depended on the governed board reading a pin.
+- **Two sources of truth.** The sense pair is authoritative; the module's register is a cross-check. Believing the register alone would have rebuilt the `stm32_ack` problem one layer down.
+- **The observation itself needs a failure mode.** A single sense pin makes a cut wire look like a position, and the position it looks like is the dangerous one. The antivalent pair exists so that a broken observation reads as a broken observation.
+- **Polled at 100 ms, not interrupt-driven.** A contact that fails to move raises no edge.
+- **The arbiter owns it; the governance tier may only request.** Close requests are refused while an override is latched; open requests always honoured.
+- **Neither side infers isolation.** `motor_power_cut` and `motors_isolated` are false before the first observation and false when the observation is UNKNOWN.
+- **The Alvik keeps its four firmware gates** as defence in depth, and its kill pin is demoted in the firmware docstring to a local test input that is explicitly not a governance control. A parity test guards against the wiring coming back.
+
+**Not yet built**, and tracked in the reconciliation: the Nesso N1 console and signed HALT lift (step 13), audit journal signing (14), the evidence modules (15), and the witness UNO Q (16).
+
 ---
 
 ## 12. Threat Model and Limits
@@ -1162,7 +1278,10 @@ The governance claim is that authority is separated in circuitry rather than ass
 |---|---|
 | A compromised governance host tries to silence its supervisor | No message in the protocol clears an override. Tested against the whole outbound vocabulary, including replayed R4 messages. |
 | A compromised host rewrites the audit log | Edits, deletions, backdating and verbatim reinsertion are all detected against the retained digests. |
-| The governance process crashes or hangs | The R4 watchdog latches within 2 s and asserts the kill line. Restarting the software does not clear it. |
+| The governance process crashes or hangs | The R4 watchdog latches within 2 s and opens the contact. Restarting the software does not clear it. |
+| Power is lost at every board | The contact holds where it was. Bistable: no coil current is needed to keep the motors isolated. |
+| The Alvik is reflashed to ignore its gates | Irrelevant to the physical path. There is no pin for it to stop honouring; the supply is simply absent. |
+| The relay is commanded and does not move | The sense line disagrees with the module's register, both sides latch an override independently, and the annunciator shows LATCH. |
 | The oversight cable is cut | The governance tier fails closed within 3 s; the R4's hard line is unaffected. |
 | Hostile bytes on either link | Length guards, CRC and resynchronisation. Tested with oversized headers, random bytes and corrupt frames. |
 | SQL or separator injection through a detection label | Parameterised writes; the canonical rendering is separator-safe. Both tested. |
@@ -1171,12 +1290,13 @@ The governance claim is that authority is separated in circuitry rather than ass
 
 | Limit | Consequence |
 |---|---|
-| The oversight serial link is trusted to the extent the USB-C cable is | An attacker with the cable can forge `OVERRIDE_CLEAR` and release the soft veto. The hard kill line is unaffected, which is why it exists. |
+| The oversight serial link is trusted to the extent the USB-C cable is | An attacker with the cable can forge `OVERRIDE_CLEAR` and release the soft veto. The relay is unaffected, which is why the physical path exists. |
 | The attestation chain is unkeyed | A host controlling both the database and the link can forge a consistent chain over falsified rows *going forward*. Rows already witnessed remain protected. |
 | The filter does not block on `ATTEST_ACK` | A `GAP` or `CHAIN_BREAK` verdict stops the next command, not the one in flight. |
 | The R4 retains only 64 digests | A long session evicts the oldest. Reconciliation covers the window the node still holds. |
 | Reading digests back needs the Wi-Fi console | The least satisfying part of the design. |
-| The kill line depends on a shared ground | A floating line reads as noise, and this is the one failure the design cannot detect for itself. |
+| A fault in the de-energised sense channel is latent | Only one channel is energised at a time, so a break in the other is invisible until the contact next moves. Every command reads back, which is when it surfaces, but between transitions the pair is single-channel in effect. |
+| Physical access to the relay defeats it | Anyone who can bridge the contact restores motor power. The control is against software compromise and component failure, not against someone with a screwdriver. |
 
 ### What is not tested at all
 
@@ -1185,7 +1305,8 @@ Everything above is exercised in software. The following need the physical rig a
 - Pin behaviour, debounce timing and the LED matrix driver on real hardware
 - `Serial` throughput and framing at 921600 baud over a real USB-C link
 - The Wi-Fi console
-- Electrical behaviour of the kill line: rise time, noise immunity, ground-loop effects
+- Electrical behaviour of the relay path: contact bounce, coil pulse adequacy, inrush on the motor supply, opto forward current at the Alvik's cell voltage, and the switching thresholds of both sense channels
+- Whether the ABX00138 exposes a readable state register at all, and whether it observes the contact or echoes the command
 - Every timing figure in the protocol specification. They are design targets, not measurements.
 
 This is a first embedded build. The software claims are tested; the hardware claims are, for now, claims.
@@ -1198,10 +1319,12 @@ This is a first embedded build. The software claims are tested; the hardware cla
 |---|---|---|
 | UNO Q 4GB camera module | Arduino native CSI / Arducam MIPI / Waveshare | Pending: no Arduino-native CSI module confirmed available |
 | Confidence threshold calibration | 0.70 (current) / data-driven from HRC injury studies | 0.70 (engineering default) |
-| Attestation digest signing | Unkeyed chain (current) / HMAC with a key held only by the R4 / TPM | Unkeyed |
+| Attestation digest signing | Unkeyed chain (current) / Ed25519 with a key held only by the Nesso N1 | Unkeyed. Decided for step 14: Nesso holds the only key. |
 | Blocking on `ATTEST_ACK` before transmit | Non-blocking (current) / blocking with a deadline | Non-blocking |
 | Retained digest read-back | Wi-Fi console (current) / a serial command / SD card | Wi-Fi console |
 | Retained digest capacity | 64 in SRAM (current) / EEPROM-backed / external flash | 64 in SRAM |
 | Audit database location | Local SQLite / dedicated NVMe / remote syslog | Local SQLite |
 | Dashboard authentication | None (local-only) / mTLS / token | None (demonstrator) |
-| Oversight override auto-clear | Never (current, requires a physical act) / timed / on operator confirmation over the console | Never |
+| Oversight override auto-clear | Never by a software decision. Cleared by the ARM button, or by an authenticated signature from the Nesso N1. | Decided: authenticated human gesture, section 13 of the reconciliation |
+| Latch state register | Assumed to echo the command; the sense pair is authoritative regardless | Needs an ABX00138 datasheet check, which costs nothing either way |
+| Sense channel B current draw | A milliamp-scale continuous load on the motor supply while the contact is closed | Measure on the bench; size the series resistor to suit |

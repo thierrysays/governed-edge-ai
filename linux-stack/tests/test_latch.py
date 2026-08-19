@@ -213,9 +213,61 @@ class TestSourceDisagreement:
 # ---------------------------------------------------------------------------
 
 class TestSenseFailure:
+    """The observation is an antivalent pair: two channels that must disagree.
+
+    One channel is energised only while the contact is open, the other only
+    while the motor rail is live. This exists because a single sense input
+    cannot tell a position from a cut wire, and one of the two positions it
+    would confuse with a fault is OPEN, which reads as "the motors are
+    isolated". Breaking either channel here must produce UNKNOWN instead.
+    """
+
     def test_unreadable_sense_gives_unknown(self, latch, sim):
         sim.inject_sense_failure()
         assert latch.poll().observed is LatchState.UNKNOWN
+
+    @pytest.mark.parametrize("channel", ["a", "b", "both"])
+    def test_breaking_the_energised_channel_is_enough(self, latch, sim, channel):
+        """Half an observation is not an observation.
+
+        Channel A is energised while the contact is open, so with the contact
+        closed it is channel B that carries the reading.
+        """
+        latch.permit() if channel == "b" else latch.enforce_halt()
+        sim.inject_sense_failure(channel)
+        assert latch.poll().observed is LatchState.UNKNOWN
+
+    def test_a_fault_in_the_dark_channel_is_latent(self, latch, sim):
+        """Worth stating rather than hiding: only the energised channel is
+        under test at any moment, so a break in the other one is invisible
+        until the contact moves. That is why every command reads back and why
+        the pair is polled rather than waiting for an edge."""
+        latch.enforce_halt()                    # A energised, B dark
+        sim.inject_sense_failure("b")
+        assert latch.poll().observed is LatchState.OPEN     # latent
+        reading = latch.permit()                             # now B is asked
+        assert reading.observed is LatchState.UNKNOWN
+
+    def test_a_cut_harness_never_reads_as_isolated(self, latch, sim):
+        """The failure the pair exists to prevent. With a single sense input
+        wired either way, one position is also what a broken wire looks like,
+        and if that position is OPEN the arbiter claims an isolation it has
+        not seen."""
+        latch.enforce_halt()
+        assert latch.enforcing is True
+        sim.inject_sense_failure("both")
+        latch.poll()
+        assert latch.enforcing is False
+
+    def test_an_unknown_channel_pair_is_not_a_position(self, sim):
+        """Both channels dark is the flat-battery and cut-harness case, and it
+        is not evidence that the contact moved."""
+        sim.inject_sense_failure("both")
+        assert sim.read_sense() is LatchState.UNKNOWN
+
+    def test_an_unnamed_channel_is_refused(self, sim):
+        with pytest.raises(ValueError, match="'a', 'b' or 'both'"):
+            sim.inject_sense_failure("c")
 
     def test_unknown_never_counts_as_enforcing(self, latch, sim):
         """An unreadable sense line is not evidence that the motors are
