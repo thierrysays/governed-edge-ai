@@ -116,7 +116,12 @@ governed-edge-ai/
 
 ## QA baseline
 
-241 tests · 95.76% coverage · ruff clean · mypy clean · bandit clean · pip-audit clean
+313 tests total across two modules · ruff clean · mypy clean · bandit clean · pip-audit clean
+
+| Module | Tests | Coverage |
+|---|---|---|
+| linux-stack | 241 | 95.76% |
+| audit-service | 72 | 96.13% |
 
 ```bash
 make qa        # lint + typecheck + security + full test suite

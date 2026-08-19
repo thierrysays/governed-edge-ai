@@ -123,7 +123,7 @@ def _build_backends() -> list[PerceptionPipeline]:
         from perception.backends_impl import YOLOXBackend
         backends.append(YOLOXBackend())
         log.info("Loaded YOLO-X backend")
-    except (ImportError, RuntimeError):
+    except (ImportError, RuntimeError, OSError):
         from perception.backends import StubObjectDetector
         backends.append(StubObjectDetector())
         log.info("YOLO-X unavailable: using StubObjectDetector")
@@ -132,7 +132,7 @@ def _build_backends() -> list[PerceptionPipeline]:
         from perception.backends_impl import MediaPipeBackend
         backends.append(MediaPipeBackend())
         log.info("Loaded MediaPipe backend")
-    except (ImportError, RuntimeError):
+    except (ImportError, RuntimeError, OSError):
         from perception.backends import StubGestureRecognizer
         backends.append(StubGestureRecognizer())
         log.info("MediaPipe unavailable: using StubGestureRecognizer")
@@ -141,7 +141,7 @@ def _build_backends() -> list[PerceptionPipeline]:
         from perception.backends_impl import PoseNetBackend
         backends.append(PoseNetBackend())
         log.info("Loaded PoseNet backend")
-    except (ImportError, RuntimeError):
+    except (ImportError, RuntimeError, OSError):
         from perception.backends import StubPoseEstimator
         backends.append(StubPoseEstimator())
         log.info("PoseNet unavailable: using StubPoseEstimator")

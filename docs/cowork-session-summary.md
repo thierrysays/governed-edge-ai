@@ -1,5 +1,7 @@
 # Governed Edge AI: Cowork Session Summary
 
+> **Scope note:** This document describes the six build steps completed on 5 August 2026 (Steps 1–6). Steps 7 (Alvik firmware) and 8 (UNO Q perception service) were implemented subsequently and are documented in `docs/architecture.md` §11 and in `docs/build-log.md`. The current test count is 313 (241 linux-stack + 72 audit-service); the step count below reflects the original session scope only.
+
 **Project:** governed-edge-ai Physical AI Demonstrator
 **Repository:** github.com/thierrysays/governed-edge-ai (public, main branch)
 **Session date:** 5 August 2026

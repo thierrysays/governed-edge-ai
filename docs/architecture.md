@@ -694,60 +694,63 @@ assert row["stm32_ack"] == 0     # MCU rejected (KILL_SWITCH_ACTIVE)
 
 ---
 
-## 11. Planned Extensions (Steps 7–8)
+## 11. Completed Implementation (Steps 7–8)
 
-### Step 7: Alvik firmware
+All eight build steps are complete. This section records what was implemented and the decisions taken.
 
-**Goal:** make the Alvik respond to `CommandRequest` frames over USB-C serial, execute motor commands, and return `CommandAck` or `CommandReject`.
+### Step 7: Alvik firmware (`alvik-firmware/`)
 
-**Responsibility split:**
+**Language chosen:** MicroPython (CPython-testable; no MicroPython-specific APIs used in the testable subset).
 
-| Processor | Responsibility |
+**Transport chosen:** USB-C serial (deterministic, no Wi-Fi dependency, native to Alvik's USB-C port).
+
+**Motor mapping implemented** (`alvik-firmware/motor_map.py`):
+
+| `ActionType` | Alvik motor command |
 |---|---|
-| STM32F411 | Receive and validate `CommandRequest`, check kill-switch GPIO, execute motor commands, return `CommandAck` / `CommandReject` |
-| ESP32-S3 | USB-C serial bridge to STM32F411; optionally Wi-Fi telemetry |
+| `HALT` | `stop_motors()` |
+| `MOVE_JOINT_1` | left wheel forward |
+| `MOVE_JOINT_2` | right wheel forward |
+| `MOVE_JOINT_3` | left wheel reverse |
+| `MOVE_JOINT_4` | right wheel reverse |
+| `MOVE_JOINT_5` | rotate left (differential) |
+| `MOVE_JOINT_6` | rotate right (differential) |
+| `GRIPPER_OPEN/CLOSE` | ignored (no gripper on Alvik) |
 
-**Open decisions:**
-- Language: MicroPython or Arduino C for STM32F411 firmware?
-- Transport: USB-C serial or Bluetooth 5.1 for `CommandRequest` reception?
-- Motor command mapping: `ActionType.HALT` → stop all motors; `ActionType.MOVE_JOINT_1..6` → mapped to left/right motor differential drive; `ActionType.GRIPPER_OPEN/CLOSE` → not yet mapped (Alvik has no gripper; may map to forward/backward or ignored)
+**Four firmware governance gates** (enforced in order in `alvik-firmware/main.py`):
 
-**Governance constraint:** the Alvik STM32F411 must enforce the same two checks as all other STM32 implementations: `audit_ref ≠ 0` and independent float32 confidence gate. A third `RejectReason.AUDIT_REF_ZERO` response confirms the protocol invariant survives to Tier 3.
+1. `audit_ref != 0` — rejects `CommandRequest` with `audit_ref == 0`, returns `CommandReject(RejectReason.AUDIT_REF_ZERO)`
+2. Kill-switch GPIO — if kill-switch active, returns `CommandReject(RejectReason.KILL_SWITCH_ACTIVE)`
+3. Float32 confidence gate — rejects if `confidence < 0.70` (independent of VENTUNO Q's Linux-side gate)
+4. Known action type — rejects unrecognised `ActionType`, returns `CommandReject(RejectReason.UNKNOWN_ACTION)`
 
-### Step 8: UNO Q 4GB perception service
+**IPC codec subset** (`alvik-firmware/ipc_codec.py`): MicroPython-compatible binary codec, CRC-16/CCITT, all 8 message types, CPython-testable without MicroPython runtime.
 
-**Goal:** replace the stub backends with real camera-driven inference on the UNO Q 4GB, and send `DetectionResult` objects to the VENTUNO Q governance filter over the network.
+### Step 8: UNO Q 4GB perception service (`linux-stack/perception/`)
 
-**Architecture:**
+**Camera integration:** V4L2 via OpenCV `VideoCapture(device, cv2.CAP_V4L2)`; `SyntheticFrameSource` used in CI (no hardware required).
 
-```
-UNO Q 4GB (QRB2210 Linux):
-  Camera (ISP) → OpenCV capture → YOLO-X / MediaPipe / PoseNet
-  → DetectionResult serialised (JSON or protobuf)
-  → HTTP/gRPC or UDP multicast to VENTUNO Q
+**Network transport chosen:** length-prefixed JSON over TCP, port 9100. Each `DetectionResult` serialised as 4-byte big-endian uint32 (payload length) + UTF-8 JSON. VENTUNO Q listens as TCP server; UNO Q connects as client.
 
-VENTUNO Q (IQ8 NPU Linux):
-  Network receiver → list[DetectionResult]
-  → GovernanceFilter.process_frame()   [unchanged from current implementation]
-```
+**Multi-backend fallback strategy** (`linux-stack/perception/uno_q_service.py`): `_build_backends()` attempts each production backend independently; catches `(ImportError, RuntimeError, OSError)` and falls back to a stub. `OSError` covers `FileNotFoundError` when model weights are installed but the `.task` file is absent.
 
-**Open decisions:**
-- Camera module: Arduino native CSI module (if available) or Arducam / Waveshare MIPI module?
-- Network transport: gRPC (reliable, typed), UDP (low latency, best-effort), or USB-C UART (no Wi-Fi dependency)?
-- Model runtime: Qualcomm AI Hub on VENTUNO Q for heavy models; QRB2210 onboard GPU/NPU for pre-processing?
+**Backend stack:**
+
+| Backend | Stub fallback | Detection type |
+|---|---|---|
+| `YOLOXBackend` | `StubObjectDetector` | Person / robot_part / tool |
+| `MediaPipeBackend` | `StubGestureRecognizer` | Stop / thumbs_up/down / swipe |
+| `PoseNetBackend` | `StubPoseEstimator` | Proximity boundary breach |
+
+**Transport implementation** (`linux-stack/perception/network.py`): `DetectionResultServer` (VENTUNO Q side) and `DetectionResultClient` (UNO Q side) — both use the same 4-byte length-prefix framing.
 
 ---
 
-## 12. Open Decisions
+## 12. Remaining Open Decisions
 
 | Decision | Options | Current default |
 |---|---|---|
-| UNO Q 4GB camera module | Arduino native / Arducam MIPI / Waveshare | Unknown: pending store research |
-| UNO Q 4GB ↔ VENTUNO Q transport | Wi-Fi UDP / gRPC / USB-C UART | Wi-Fi (to be validated) |
-| Alvik firmware language | MicroPython / Arduino C | TBD |
-| Alvik IPC reception transport | USB-C serial / Bluetooth 5.1 | USB-C (simpler, deterministic) |
-| Alvik motor mapping for MOVE_JOINT_1..6 | Differential drive mapping / ignored | TBD |
-| Alvik GRIPPER_OPEN/CLOSE mapping | Forward/backward / ignored / extension gripper | TBD |
+| UNO Q 4GB camera module | Arduino native CSI / Arducam MIPI / Waveshare | Pending: no Arduino-native CSI module confirmed available |
 | Confidence threshold calibration | 0.70 (current) / data-driven from HRC injury studies | 0.70 (engineering default) |
 | Audit log tamper-proofing | SQLite WAL (current, tamper-evident) / signed entries / TPM | SQLite WAL |
 | Audit database location | Local SQLite / dedicated NVMe / remote syslog | Local SQLite |
