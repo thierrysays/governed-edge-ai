@@ -2,7 +2,7 @@
 
 **Five boards, one job each: a rationale, and the deltas from the current codebase.**
 
-Version 1.1, 2026-08-19 · Status: **design only, nothing implemented**. Eight of eleven open questions now answered; see section 16.
+Version 1.2, 2026-08-19 · Status: **design only, nothing implemented**. All open questions now answered or defaulted; see sections 15 and 16.
 
 ---
 
@@ -143,7 +143,9 @@ The ToF Distance module, mounted on the R4 and pointed at the robot rather than 
 
 It is weaker in one respect, since it sees only motion along its axis and cannot detect rotation in place. It is stronger in another, since it does not depend on anything mounted on the robot at all, and a robot that has lost power still reports as stopped correctly.
 
-Recommendation: use the ToF for proof of stop first, and add the remote sensor head only if the axis limitation turns out to matter. That keeps the parts count at five boards and the control genuinely independent.
+It also has a hard range limit of roughly 1.3 m, beyond which the control does not degrade, it stops existing. Section 15.3 works out what that requires: a bounded demo area, and a third audit state so that "no observation available" never reads as "observed stopped".
+
+**Decided: the ToF, with the range limit logged as its own state.** Five boards, no tether, no radio, and the remote sensor head held in reserve if rotation in place turns out to matter.
 
 ### Where the Nesso N1 fits
 
@@ -218,7 +220,7 @@ The design I built **fails open on power loss** and no test could have caught it
 
 **Decided: polled at a fixed cadence** from the arbiter's main loop. Deterministic, no interrupt latency inside the timing budget, and it detects a latch that silently failed to change state rather than only catching transitions. The cadence becomes a documented parameter, and a mismatch between commanded and observed position is itself an audit event.
 
-This assumes the module exposes a state register. **To confirm against the ABX00138 datasheet before step 11**, and if it does not, the fallback is a GPIO sense line across the contact, which is more wiring and gives the same property.
+The read-back source matters more than the cadence, and section 15.2 works it out: a state register on the module's own MCU most likely echoes what it last commanded rather than observing where the contact is, which would reproduce the exact error the read-back exists to eliminate. **A GPIO sense line across the contact is the primary source; the I2C register is a cross-check, and disagreement between them is itself a finding.**
 
 ---
 
@@ -449,23 +451,71 @@ With the arbiter staying on the R4, step 17 is no longer on the critical path. I
 
 ---
 
-## 15. Open questions
+## 15. Proposed defaults
 
-Eight of the original eleven are answered in section 16. Three remain, plus two raised by those answers.
+Eight questions were answered directly (section 16). One, the *Scénario C, Lot E* taxonomy, is dropped: the diagram's subtitle records it and nothing in this reconciliation depends on it.
 
-### Blocking
+The four below are reasoned defaults rather than answers. They are concrete enough to build on and cheap to overturn. Two of them turned up problems while being worked out, and those problems change the recommendation.
 
-1. **Scénario C, Lot E.** The diagram's subtitle names a taxonomy that appears nowhere in the repository. What are the other scenarios and lots, and does this reconciliation sit inside that scheme or replace part of it? Nobody but you can answer this, and it may change how the whole document is filed.
+### 15.1 Witness model: a different family, tuned for recall
 
-2. **Witness model independence.** Different weights, or a different architecture? Correlated failure is exactly what the witness exists to catch, so two instances of the same model with different training data is a much weaker control than two different architectures. Gates step 16, not step 11.
+**Proposed: MobileNet-SSD or NanoDet on the witness, with a classical motion detector as a floor. Explicitly not a second YOLO variant.**
 
-3. **Latch state register.** Does the ABX00138 expose one, as the polled read-back in section 6 assumes? Datasheet check. If not, the fallback is a GPIO sense line across the contact. Gates step 11.
+Correlated failure is the only thing that defeats a two-observer control, and architecture is where correlation lives. Two anchor-free one-stage detectors trained on similar data share inductive biases and therefore share blind spots; different weights do not fix that. A different detector family fails differently, which is the whole product being bought.
 
-### Raised by the answers
+The design already has sensor independence working for it, and it is worth naming because it was not accidental: the primary sees through IMX219 on MIPI CSI, the witness through a UVC webcam on USB. Different sensor, different interface, different driver stack, and now different viewpoint. Model independence completes a set.
 
-4. **Remote sensor head, or the ToF instead?** Section 3.1. Wireless Movement telemetry needs a reader on the Alvik that is not the Alvik, which means a sixth board. The ToF on the R4 gives tether-free proof of stop with no extra hardware, at the cost of missing rotation in place. Recommendation is to try the ToF first.
+**The tuning matters more than the architecture, and follows from a decision already taken.** Disagreement means *absence*, and the witness holds a veto it can only use to stop. So a false positive on the witness costs availability, a false negative costs safety, and the two are not symmetric. The witness should be tuned for **recall over precision**: it should over-detect.
 
-5. **Camera splay angle.** Section 7.1. The safety envelope is defined by it, so it needs choosing, measuring and documenting rather than being set by whatever the mounting allows.
+That inverts the usual instinct, and it has a useful consequence. A crude, high-recall method is both more independent and better suited than a second sophisticated model. Background subtraction or a motion-occupancy blob detector fails in ways no CNN fails, runs comfortably on the UNO Q, and over-detects by nature. Recommendation: run the classical method as the always-on floor and the small CNN above it, with the veto firing on the union.
+
+Hardware agrees with the argument, which is a good sign. The UNO Q has no NPU to match the VENTUNO Q's 40 TOPS, so it could not run the same YOLO-X even if that were wanted.
+
+### 15.2 Latch read-back: assume the register echoes the command, and sense the contact
+
+**Proposed: a GPIO sense line across the relay contact as the primary read-back, with the I2C register as a secondary cross-check.**
+
+The datasheet check is still owed. But the likely answer makes the original question the wrong one.
+
+The Modulino line puts a small microcontroller behind the I2C interface. A bistable relay driven by SET and RESET pulses is a natural fit for that pattern, which means any state register the module exposes is most likely **the module's own record of what it last commanded**, not an observation of where the contact actually is.
+
+If so, polling it proves nothing. It is the same error as `stm32_ack`: the component that was told to stop reporting that it stopped. Closing that gap is the entire reason the read-back exists, so a register that echoes the command would leave the design exactly where it started while looking like it had improved.
+
+A sense line across the contact observes the physical position. It costs one GPIO on the R4 and one wire.
+
+**Keep both, and treat disagreement as a finding.** If the module says latched and the contact says open, that is a high-value audit event: a failed relay, a broken sense line, or a module lying. Under this project's own logic, the case where two sources disagree is more informative than either source agreeing with itself.
+
+### 15.3 Proof of stop: the ToF, and log its range limit as a state
+
+**Proposed: Modulino Distance on the R4 pointed at the robot. No sixth board. And a new audit state for "no observation available".**
+
+Section 3.1 already made the case: it needs no tether, no radio and nothing mounted on the robot, and a robot that has lost power still reports as stopped correctly. It misses rotation in place, which is the accepted cost.
+
+**The problem found while specifying it:** the VL53L4CD reaches roughly 1.3 m. Beyond that the proof-of-stop control does not degrade gracefully, it simply stops existing, and a naive implementation would log "not moving" for a robot that had merely driven out of range.
+
+That is the exact failure this project exists to make impossible: a control that silently reports success when it is not operating.
+
+Two things follow. The demo area is bounded by the sensor, which should be stated rather than discovered. And the audit log needs three states where it would naturally have two:
+
+| State | Meaning |
+|---|---|
+| `observed_stopped` | In range, distance stable. Proof of stop. |
+| `observed_moving` | In range, distance changing. |
+| `no_observation` | Out of range. **The control is not operating.** |
+
+The same forensic distinction as `stm32_ack` being NULL rather than 0, and for the same reason: the absence of evidence must not read as evidence of absence.
+
+### 15.4 Camera splay: 52° between optical axes
+
+**Proposed: each camera rotated 26° from the centreline, giving about 114° of coverage with about 10° of overlap in the middle.**
+
+Two 62.2° cones with their axes θ apart cover 62.2 + θ degrees and overlap by 62.2 − θ. At θ = 52° that is 114.2° of coverage and 10.2° of overlap.
+
+Zero overlap would buy another 10° of width and is the wrong trade. Mounting tolerance on a bench rig is easily a couple of degrees per camera, so a seam specified as exactly closed becomes a real gap in practice, and a narrow blind wedge directly ahead of the robot is the worst possible place for one.
+
+The overlap also pays for itself as a free self-test: an object in the shared wedge should be seen by both ISP channels, so a camera that has failed, been knocked or lost focus shows up as a disagreement between them rather than as silence.
+
+**Blind sector: about 246°, behind and to the sides.** That belongs in the threat model in those words, because the audit log cannot tell an empty blind sector from an occupied one.
 
 ---
 
@@ -494,6 +544,19 @@ Eight of the original eleven are answered in section 16. Three remain, plus two 
 | Nesso radio | **Wi-Fi 6** | "Out of band" means off the decision path, not out of the building. Documentation should say so. |
 | Signing key custody | **Nesso only** | Concentration risk accepted; needs a documented re-pairing procedure and retained old public keys |
 
+### Proposed defaults, section 15
+
+| Item | Default | Why it is not just a preference |
+|---|---|---|
+| Witness model | Different family, recall-tuned; classical floor plus small CNN | The veto is asymmetric, so over-detection costs availability and under-detection costs safety |
+| Latch read-back | GPIO sense line primary, I2C register secondary | A register on the module's MCU most likely echoes the command, which is the error the read-back exists to eliminate |
+| Proof of stop | ToF on the R4, plus a `no_observation` audit state | The sensor's 1.3 m range means the control stops existing rather than degrading; that must be on the record |
+| Camera splay | 52° between axes, ~114° coverage, ~10° overlap | Mounting tolerance turns a zero-overlap seam into a blind wedge straight ahead; the overlap doubles as a camera self-test |
+
+| Item | Status |
+|---|---|
+| Scénario C, Lot E | **Dropped.** Recorded in the diagram's subtitle; nothing here depends on it. |
+
 ### Standing
 
 | Decision | Rationale |
@@ -509,7 +572,9 @@ Eight of the original eleven are answered in section 16. Three remain, plus two 
 
 ## 17. What this document does not do
 
-It changes no code and orders no hardware. Three of the five remaining questions in section 15 gate work: the latch state register gates step 11, witness model independence gates step 16, and the Scénario C taxonomy may change how this document is filed.
+It changes no code and orders no hardware.
+
+Nothing now blocks step 10 or step 11. The defaults in section 15 are the author's judgement, not measurements, and three of them carry an assumption that a bench will settle quickly: that the latch module's register echoes its command, that the ToF reaches roughly 1.3 m in this mounting, and that mounting tolerance is a couple of degrees. Each is cheap to check and each changes only its own paragraph if wrong.
 
 The camera's rolling shutter, its 62.2° cone and its low-light behaviour are named here but not yet written into `docs/architecture.md` section 12, where the untested hardware claims live. Step 10 does that.
 
