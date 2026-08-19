@@ -1,17 +1,41 @@
 # Cowork Brief: governed-edge-ai.html
 
-**Version 2.0, 19 August 2026.** Supersedes v1, which described a three-board rig with 241 tests. Almost every number and half the architecture in v1 is now wrong. **This revision is an update brief, not a create-from-scratch brief.**
+**Version 3.0, 19 August 2026.** Supersedes v2. Reconciled against the site build skill, and against the repository at tag `v3.0.0`.
 
 **Target page**: `https://www.glossolalie.pro/governed-edge-ai.html`
-**Task**: bring the existing page and its i18n keys in line with the project as it now stands.
+**Task**: bring this page and its i18n keys in line with the project as it now stands, creating the page if it does not yet exist.
 
 ---
 
-## What changed since v1, in one table
+## Step 0: determine whether the page exists. Do this first.
 
-Read this before touching anything. If the live page still says any of the left-hand column, it needs the right-hand one.
+v2 of this brief asserted the page was live and told you to edit it in place. **That assertion was not verified and may be wrong.** The site's canonical deployment structure lists eight pages, and `governed-edge-ai.html` is not among them:
 
-| Element | v1 said | Now |
+```
+index.html  frameworks.html  a-propos.html  contact.html
+404.html  erreur.html  mentions-legales.html  politique-confidentialite.html
+```
+
+The page may have been added since that list was written, or it may never have been built. Attempts to fetch the live site from the authoring environment were blocked by network policy, so this cannot be settled here. **You have to look.**
+
+```bash
+curl -sI 'https://www.glossolalie.pro/governed-edge-ai.html' | head -1
+```
+
+| Result | Path to take |
+|---|---|
+| `200` | **Update path.** Edit the page in place. Do not regenerate it: its nav, footer and head are correct as they are. Replace the `edge.*` i18n values, apply the three section edits in *HTML changes*, and skip *Adding the page*. |
+| `404` | **Create path.** Build the page from the section plan below, add every `edge.*` key, and follow *Adding the page* for the nav work across all HTML files. |
+
+Say which path you took in your report. It changes how much of the site you touched.
+
+---
+
+## What changed, in one table
+
+If the live page states anything in the left column, it needs the right one. If you are creating the page, this is the fact sheet.
+
+| Element | Old copy said | Now |
 |---|---|---|
 | Boards | 3 Arduino | **5** Arduino: UNO Q 4GB, VENTUNO Q, Alvik, UNO R4 WiFi, Nesso N1 |
 | Tests | 241, 95.76% coverage | **703**, **100%** line coverage on both modules, gate at 98% |
@@ -20,9 +44,10 @@ Read this before touching anything. If the live page still says any of the left-
 | Licence | MIT | **Apache 2.0** for code, CERN OHL-P v2 for hardware files, CC BY 4.0 for documentation |
 | Perception | On the UNO Q, primary | On the UNO Q today; the UNO Q is being reclassified as an **independent witness** whose disagreement forces a HALT |
 | Cameras | Unsourced | **Arducam IMX219 8 MP, two of them**, splayed for roughly 120° |
-| Cost | Under EUR 200 | **Do not restate a figure.** Five boards plus a relay and two cameras is well past EUR 200, and the honest claim now is "commodity parts, no bespoke silicon", not a price. |
+| Release | No version referenced | **v3.0.0**, "the latch relay" |
+| Cost | Under EUR 200 | **Do not restate a figure.** Five boards plus a relay and two cameras is well past EUR 200, and the honest claim is "commodity parts, no bespoke silicon", not a price. |
 
-The old cost claim is the one to be most careful with: it was true of the three-board rig and repeating it now would be a false statement on a page whose entire argument is about not overclaiming.
+The cost claim is the one to be most careful with. It was true of the three-board rig, and repeating it now would put a false statement on a page whose entire argument is about not overclaiming.
 
 ---
 
@@ -32,21 +57,26 @@ Thierry Sayegh-Sauvage (Glossolalie Advisory, Paris) maintains **governed-edge-a
 
 ---
 
-## Site conventions: MANDATORY (read before writing a single line of HTML)
+## Site conventions: MANDATORY
 
-The site uses a strict no-framework stack. Violating any of these will break the page or the toggle.
+Every one of these has broken the live site before. They are failure reports, not preferences.
 
 | Rule | Value |
 |---|---|
-| HTML structure | Vanilla HTML5, no framework, no CMS, no build step |
-| Scripts | `<script src="/assets/js/i18n.js?v=4"></script>` and `<script src="/assets/js/main.js?v=4" defer></script>`. NEVER `type="module"` |
-| Bilingual | All user-visible text in `data-i18n` (plain text) or `data-i18n-html` (HTML with tags). Never hardcode text in FR or EN only. |
-| Entities in `data-i18n` | Forbidden: `data-i18n` uses `textContent`, so `&amp;` renders as `&amp;`. Write `&` and `>` directly. |
-| Em-dash | Banned everywhere: in HTML, in `data-i18n` values, in JS keys. Replace with colon, comma, or period. |
-| CSS | `/assets/css/tokens.css?v=4` then `/assets/css/main.css?v=4`. No inline styles except for page-specific overrides in a `<style>` block. |
+| HTML structure | Vanilla HTML5. No framework, no CMS, no build step. |
+| Scripts | `<script src="/assets/js/i18n.js?v=5"></script>` then `<script src="/assets/js/main.js?v=5" defer></script>`. **Never `type="module"`.** ES modules run in an isolated strict scope: one syntax error stops the whole module silently, before any listener is attached, and the FR/EN toggle dies with both buttons reading `aria-pressed="false"`. |
+| No `export` / `import` | `i18n.js` and `main.js` are classic scripts. Every function stays in global scope. |
+| Apostrophes in JS | Straight and escaped: `l\'économie`. A curly `\u2019` inside a single-quoted string is a silent SyntaxError that takes the whole file down. |
+| Entities in `data-i18n` | Forbidden. `data-i18n` assigns `textContent`, so `&amp;` renders literally as `&amp;`. Write `&` and `>` directly. Only `data-i18n-html` decodes entities. |
+| Em-dash | Banned everywhere: HTML, `data-i18n` values, JS keys, comments. Use a colon, a comma or a full stop. |
+| Bilingual | All user-visible text in `data-i18n` (plain text) or `data-i18n-html` (markup). Never hardcode FR-only or EN-only text, including pull quotes: a hardcoded `<h2>` is how the last one stayed French in EN mode. |
+| CSS | `/assets/css/tokens.css?v=5` then `/assets/css/main.css?v=5`. No inline styles beyond a page-specific `<style>` block. |
+| Cache busting | `.htaccess` sets `max-age=31536000` on JS and CSS, so an edit without a version bump is invisible in the browser. Production is at **`?v=4`**. Touching `i18n.js` means **`?v=5` in every HTML file on the site**, not only this page. |
+| Navy is restricted | Only `.hero`, `.site-nav`, `.site-footer` and the mobile `.site-nav__menu` may be navy. `.section--dark` is `#F2F4F7`, a light grey. `.page-header` is `var(--ivory)` with a 2px teal bottom border. |
 | Favicon | `<link rel="icon" href="/assets/img/favicon.ico">` |
-| Nav / footer | Copy the nav and footer blocks verbatim from an existing page (e.g. `frameworks.html`). Do not invent new nav links. |
-| `data-page` | Set `data-page="governed-edge-ai"` on `<body>` so the active nav item highlights correctly. |
+| Nav / footer | Copy verbatim from an existing page, `frameworks.html` for preference. |
+| `data-page` | `data-page="governed-edge-ai"` on `<body>`, so the active nav item highlights. |
+| French copy | "board-level" is forbidden in French. Use "pour le conseil", "au niveau du conseil", or "pour les instances dirigeantes" depending on context. The keys below already comply. |
 
 ---
 
@@ -78,10 +108,12 @@ These are the credibility of the page. Keep them.
 
 ## i18n keys
 
-Replace the values of the existing `edge.*` keys with these, and add the new ones. Same rules as v1: escaped straight apostrophes, no curly apostrophes, no HTML entities in `data-i18n`, no em-dashes.
+58 keys, both languages on every one.
+
+**These have been pre-verified** so you do not inherit a broken toggle: the block below was wrapped in an object literal and passed through `node --check`, which parsed it clean, and every key was confirmed to carry both an `fr` and an `en` value. It also contains zero curly apostrophes, zero HTML entities, zero em-dashes and zero uses of "board-level" in the French. Re-run `node --check assets/js/i18n.js` after pasting anyway: the risk is what the paste does to its surroundings, not the block itself.
 
 ```js
-// ---- governed-edge-ai page, v2 ----
+// ---- governed-edge-ai page, v3 ----
 'edge.meta.title':       { fr: 'Governed Physical AI', en: 'Governed Physical AI' },
 'edge.meta.desc':        { fr: 'Etude de cas : controles de gouvernance IA appliques dans le circuit, sur cinq cartes Arduino', en: 'Case study: AI governance controls enforced in circuitry, across five Arduino boards' },
 'edge.hero.title':       { fr: 'Governed Physical AI', en: 'Governed Physical AI' },
@@ -157,19 +189,45 @@ Replace the values of the existing `edge.*` keys with these, and add the new one
 
 ---
 
-## HTML changes
+## Page structure and HTML changes
 
-The page structure stays as it is. Three section-level edits:
+### On the update path (page returned 200)
+
+The structure stays as it is. Three section-level edits, and nothing else:
 
 1. **Architecture section**: five board cards instead of three. Keys `edge.arch.unoq`, `edge.arch.ventuno`, `edge.arch.alvik`, `edge.arch.r4`, `edge.arch.nesso` and their `.role` pairs, plus the `edge.arch.least` callout.
-2. **Replace the build-steps section** with two new ones: the latch relay explanation (`edge.latch.*`, on a `section--light`) and the limits (`edge.limits.*`, on a `section--dark`). Limits last but before the repository section: ending on what the project does not do is the tone the rest of the site holds.
-3. **Governance controls**: seven items now, `edge.gov.g1` to `edge.gov.g7`.
+2. **Replace the build-steps section** with two new ones: the latch relay (`edge.latch.*`, on a `section--light`) and the limits (`edge.limits.*`, on a `section--dark`). Limits last, before the repository section. Ending on what the project does not do is the tone the rest of the site holds.
+3. **Governance controls**: seven items, `edge.gov.g1` through `edge.gov.g7`.
 
-Everything else, nav, footer, head, script tags, stays exactly as the live page has it. Do not regenerate the file from scratch.
+Nav, footer, head and script tags stay exactly as the live page has them, except for the `?v=` bump if you touched `i18n.js`. Do not regenerate the file.
+
+### On the create path (page returned 404)
+
+Build it in this order, mirroring `frameworks.html`:
+
+1. `<head>`: title, description, canonical, og tags, CSS links at `?v=5`
+2. `<header class="site-nav">`: copied verbatim from `frameworks.html`
+3. `<main>`, with `<body data-page="governed-edge-ai">`:
+
+| Section | Class | Keys |
+|---|---|---|
+| Hero | `page-header` | `edge.hero.*` |
+| What this is | `section section--light` | `edge.summary.*` |
+| Five boards | `section section--dark` | `edge.arch.*` plus the diagram below |
+| The stop is a contact | `section section--light` | `edge.latch.*` |
+| Governance controls | `section section--dark` | `edge.gov.*` |
+| Quality, and what is not tested | `section section--light` | `edge.qa.*` |
+| What this rig does not solve | `section section--dark` | `edge.limits.*` |
+| Repository and reuse | `section section--light` | `edge.repo.*` |
+
+4. `<footer class="site-footer">`: copied verbatim
+5. Scripts last: `i18n.js` then `main.js defer`, both classic, both at `?v=5`
+
+Remember that `section--dark` is the light grey `#F2F4F7`, not navy. Only the nav, the footer and the homepage hero are navy.
 
 ### Text-only diagram for the architecture section
 
-If the architecture section carries a preformatted diagram, this is the current one. Keep it inside a `<pre>` and do not translate it: it is a wiring diagram, not prose.
+Keep it inside a `<pre>` and do not translate it. It is a wiring diagram, not prose, so it carries no `data-i18n`.
 
 ```
                        Nesso N1
@@ -190,28 +248,78 @@ forces HALT     heartbeat +  |  reports only          | motor +V
                                   + antivalent sense
 ```
 
-## Checklist before publishing
-
-- [ ] Fetch the live `governed-edge-ai.html` and edit it in place. Do not regenerate the file: the nav, footer and head are correct as they are.
-- [ ] Update the `edge.*` values in both the `fr` and `en` objects in `assets/js/i18n.js`; remove `edge.summary.cost`, `edge.summary.costval` and the whole `edge.step1` to `edge.step8` block along with `edge.steps.h2` and `edge.steps.intro`; verify with `node --check assets/js/i18n.js`
-- [ ] Confirm every key used in the HTML exists in both language objects, and that no removed key is still referenced
-- [ ] Confirm no `type="module"` in any `<script>` tag in this file
-- [ ] Confirm no `&amp;`, `&gt;`, or similar HTML entities inside any `data-i18n` value
-- [ ] Confirm no em-dashes anywhere (search for the character itself)
-- [ ] Confirm the page no longer states a hardware cost figure anywhere, including in meta description and og tags
-- [ ] Search the whole site for the old figures and fix any that appear on other pages: "three boards", "trois cartes", "241", "95.76", "MIT"
-- [ ] Bump CSS/JS version to the next `?v=` if `i18n.js` was modified, across every page that loads it
-- [ ] Run `php -l` on any PHP file if it was touched
-- [ ] Build and deploy the ZIP: `cd public_html && find . -type f ! -path "./.git/*" | sort | zip /tmp/deploy.zip -@` then verify `unzip -l /tmp/deploy.zip | head` shows `.htaccess` at the root, not inside a subfolder
-
 ---
 
-## Nav
+## Adding the page (create path only)
 
-The nav entry already exists and does not change:
+A ninth page means the nav changes in every file that carries it, which is all of them.
 
 ```html
 <a href="/governed-edge-ai.html" data-i18n="nav.edge">Governed Physical AI</a>
 ```
 
-The title is the same in both languages: it is a project name, not a translation.
+```js
+'nav.edge': { fr: 'Governed Physical AI', en: 'Governed Physical AI' },
+```
+
+The title is identical in both languages: it is a project name, not a translation.
+
+Also add the page to `sitemap.xml`. Check whether `robots.txt` needs anything; it usually does not.
+
+---
+
+## Checklist before publishing
+
+Ordered so a failure stops you before it reaches production.
+
+**Syntax gates, run these first**
+
+- [ ] `node --check assets/js/i18n.js` returns "No syntax errors detected"
+- [ ] `node --check assets/js/main.js` returns "No syntax errors detected"
+- [ ] `grep -c "export " assets/js/i18n.js assets/js/main.js` returns 0 for both
+- [ ] `grep -rc 'type="module"' *.html` returns 0 for every file
+- [ ] `php -l api/contact.php` if any PHP was touched, otherwise skip
+
+**Content gates**
+
+- [ ] Every `edge.*` key used in the HTML exists in both the `fr` and `en` objects
+- [ ] No removed key is still referenced: `edge.summary.cost`, `edge.summary.costval`, `edge.steps.h2`, `edge.steps.intro`, `edge.step1` through `edge.step8`
+- [ ] No `&amp;`, `&gt;` or `&lt;` inside any `data-i18n` value
+- [ ] No curly apostrophes anywhere in `i18n.js`
+- [ ] No em-dash anywhere in the page or the keys
+- [ ] No "board-level" in any French value
+- [ ] No hardware cost figure anywhere, including meta description and og tags
+- [ ] Every pull quote and heading carries `data-i18n` or `data-i18n-html`. A hardcoded heading stays in one language.
+
+**Site-wide sweep**
+
+- [ ] Search every page for stale figures and fix what you find: "three boards", "trois cartes", "241", "95.76", "MIT"
+- [ ] `?v=5` in every HTML file if `i18n.js` or any CSS changed. A partial bump serves a mixed cache and is worse than none.
+
+**Deployment**
+
+- [ ] No undefined CSS variables: collect `--name:` from `tokens.css`, collect `var(--name)` from `main.css` and `frameworks.css`, and confirm the difference is empty apart from `layer-color` and `layer-width`, which have fallbacks
+- [ ] Flat ZIP: `cd public_html && find . -type f ! -path "./.git/*" ! -name "*.bak" | sort | zip /tmp/deploy.zip -@`
+- [ ] `unzip -l /tmp/deploy.zip | head -5` shows `.htaccess` at the root, not inside a subfolder
+
+**After deploying**, in the browser console:
+
+```js
+fetch('/governed-edge-ai.html?bust=' + Date.now(), {cache:'no-store'})
+  .then(r => r.text())
+  .then(t => console.log('served v=', t.match(/i18n\.js\?v=(\d+)/)?.[1]));
+
+console.log('toggle live:',
+  document.querySelector('.lang-btn[data-lang="fr"]')?.getAttribute('aria-pressed') === 'true');
+```
+
+Then click through to EN and confirm nothing stays French, the diagram included.
+
+---
+
+## What to report back
+
+- Which path you took, update or create, and what the `curl -sI` actually returned
+- Whether the `?v=` bump touched every HTML file, and which version you landed on
+- Any stale figure you found on another page during the site-wide sweep
+- Anything in this brief that turned out to be wrong about the live site
