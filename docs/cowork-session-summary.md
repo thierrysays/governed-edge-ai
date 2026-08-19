@@ -472,39 +472,39 @@ Note: do not tag Massimo Banzi (no longer with Arduino).
 
 ### LinkedIn Commentary Post (to add as a comment on the published article)
 
-Written to be posted as a **comment on the existing article**, not as a new feed post. It reports what changed since publication, and its whole value is that it reports a mistake found in the author's own design rather than a milestone.
+Written to be posted as a **comment on the existing article**, not as a new feed post. It reports what changed at v3.0.0, and its value is that it reports a fault found in the author's own design rather than a milestone.
 
-Length: 1,694 characters. Well under the 3,000 character comment limit, with room for a follow-up reply.
+**Length: 1,168 characters.** LinkedIn caps comments at **1,250**, not the 3,000 that applies to posts, so this is written to the tighter ceiling and has roughly 80 characters of headroom.
 
 ---
 
-Since publishing this, the rig has changed in a way worth reporting, because it came from finding a real fault in my own design.
+An update, because it came from finding a fault in my own design.
 
-The physical stop used to be a signal wire from the oversight board into a pin on the robot. Two things were wrong with it.
+The physical stop used to be a signal wire from the oversight board into a pin on the robot. It released when that board lost power. And it worked only because the robot's firmware chose to read the pin, which makes the component under review a participant in its own restraint.
 
-It released when the oversight board lost power. A safety control that stops enforcing the moment its own board dies is not a safety control. And it worked only because the robot's firmware chose to read that pin, which makes the component under review a participant in its own restraint. Reflash the robot and the control evaporates.
+Neither fault showed up in 611 passing tests. The doubles modelled a state machine, so there was no power to lose. Coverage does not find a fault whose failure mode your model has no vocabulary for.
 
-Neither fault was hypothetical, and neither showed up in 611 passing tests. The test doubles modelled a state machine, so there was no power to lose. Coverage does not find a fault whose failure mode your model has no vocabulary for.
+It is now a bistable relay contact in the motor supply. It holds with no current at all, and the robot has nothing left to agree to.
 
-The replacement is a bistable relay contact sitting in the motor supply. It holds its position with no current at all, so cutting power to the oversight board leaves the motors exactly as isolated as they were a moment before. And it is in the supply, so the robot has nothing left to agree to.
+Writing the deployment instructions found the second one. The board read that contact back on a single sense line, and I had to answer what it reads when the wire is cut. The answer was "open", which the board reports as "the motors are isolated". On no evidence.
 
-Then writing the deployment instructions found a second one. The board read the contact back on a single sense line, and I had to answer what that line reads when its wire is cut. The answer was "open", which the board would have reported as "the motors are isolated". The most dangerous sentence in the system, on no evidence at all.
-
-Two sense channels now, wired to disagree with each other. Any fault reads as "cannot see", and nothing rounds that up to "isolated".
+Two channels now, wired to disagree. Any fault reads as "cannot see", and nothing rounds that up to "isolated".
 
 Governance controls fail in the direction you did not model.
 
-github.com/thierrysays/governed-edge-ai
+v3.0.0: github.com/thierrysays/governed-edge-ai
 
 ---
 
 **Notes for posting.**
 
-No hashtags: it is a comment on an existing thread, not a discovery surface.
+No hashtags. It is a comment on an existing thread, not a discovery surface.
 
-Do not add the "703 tests, 100% coverage" figure. The post's argument is that a passing suite missed the fault, and a test count in the same breath undercuts it.
+No test count for the current build. The argument is that a passing suite missed the fault, and quoting 703 tests in the same breath undercuts it. The 611 figure stays because it is the number that failed to catch anything.
 
-If the comment draws a reply asking what the two channels are, the follow-up is short: one opto is lit only while the contact is open, the other only while the motor rail is live, and exactly one should ever be lit. Both dark or both lit means the observation failed, not that the contact moved.
+The version reference is the last line rather than the first. The subject is the fault, not the release.
+
+If the comment draws a reply asking what the two channels are, the follow-up fits in one comment: one opto is lit only while the contact is open, the other only while the motor rail is live, and exactly one should ever be lit. Both dark or both lit means the observation failed, not that the contact moved.
 
 ---
 
