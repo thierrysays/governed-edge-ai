@@ -1,7 +1,7 @@
 """
 Smoke tests for the oversight tier (Arduino UNO R4 WiFi).
 
-Fast, hardware-free sanity: if these fail, the four-board governance path is
+Fast, hardware-free sanity: if these fail, the end-to-end governance path is
 broken and nothing downstream is worth running.
 """
 
