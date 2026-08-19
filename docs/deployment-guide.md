@@ -1300,6 +1300,7 @@ make qa          # all of the above
 | `docs/governance-mapping.md` | Control objectives mapped to implementation |
 | `r4-supervisor/README.md` | The oversight node in detail |
 | `docs/build-log.md` | Decisions taken, and why |
+| `docs/state-of-play.md` | Where the project stands, and what is not true any more |
 
 If something in this guide is wrong or incomplete, that is worth an issue on
 the repository. A deployment guide only earns its place by being tried.
