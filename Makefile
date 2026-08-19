@@ -97,9 +97,19 @@ linux-typecheck: _check-linux-deps
 
 linux-security: _check-sec-deps
 	@echo "==> linux-stack: bandit SAST"
-	cd $(LINUX) && $(PYTHON) -m bandit -r ipc/ perception/ -ll -q
+	cd $(LINUX) && $(PYTHON) -m bandit -r ipc/ perception/ governance/ -ll -q
 	@echo "==> linux-stack: pip-audit CVE scan"
 	pip-audit --requirement $(LINUX)/requirements.txt
+
+# ---------------------------------------------------------------------------
+# alvik-firmware (ruff lint only; firmware runs on MicroPython, no pytest)
+# ---------------------------------------------------------------------------
+
+alvik-lint: _check-linux-deps
+	@echo "==> alvik-firmware: ruff lint"
+	cd alvik-firmware && $(PYTHON) -m ruff check .
+
+lint: alvik-lint
 
 # ---------------------------------------------------------------------------
 # Security tool dep check

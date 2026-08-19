@@ -152,13 +152,13 @@ class TestCommandMapping:
         gov.process_frame([_det("proximity_breach", 0.76, "pose")])
         assert _log_row(audit_logger)[1] == "HALT"
 
-    def test_thumbs_up_maps_to_gripper_open(self, gov, audit_logger):
+    def test_thumbs_up_maps_to_move_forward(self, gov, audit_logger):
         gov.process_frame([_det("thumbs_up", 0.88, "gesture")])
-        assert _log_row(audit_logger)[1] == "GRIPPER_OPEN"
+        assert _log_row(audit_logger)[1] == "MOVE_FORWARD"
 
-    def test_thumbs_down_maps_to_gripper_close(self, gov, audit_logger):
+    def test_thumbs_down_maps_to_move_backward(self, gov, audit_logger):
         gov.process_frame([_det("thumbs_down", 0.88, "gesture")])
-        assert _log_row(audit_logger)[1] == "GRIPPER_CLOSE"
+        assert _log_row(audit_logger)[1] == "MOVE_BACKWARD"
 
     def test_robot_part_maps_to_halt(self, gov, audit_logger):
         gov.process_frame([_det("robot_part", 0.91, "object")])
@@ -174,7 +174,7 @@ class TestCommandMapping:
 
     def test_all_default_map_entries_present(self):
         expected = {"person", "robot_part", "tool", "stop", "thumbs_up",
-                    "thumbs_down", "proximity_breach"}
+                    "thumbs_down", "proximity_breach", "swipe_left", "swipe_right"}
         assert expected.issubset(set(DEFAULT_COMMAND_MAP.keys()))
 
     def test_custom_command_map(self, audit_logger, session_id, channel):
@@ -342,10 +342,10 @@ class TestRejectPaths:
         row = _log_row(audit_logger)
         assert row[3] is None  # stm32_ack stays NULL
 
-    def test_gripper_open_accepted_by_stm32(self, gov, audit_logger):
+    def test_move_forward_accepted_by_stm32(self, gov, audit_logger):
         gov.process_frame([_det("thumbs_up", 0.88, "gesture")])
         row = _log_row(audit_logger)
-        assert row[3] == 1  # ACK for GRIPPER_OPEN
+        assert row[3] == 1  # ACK for MOVE_FORWARD
 
 
 # ---------------------------------------------------------------------------

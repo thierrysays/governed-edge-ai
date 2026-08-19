@@ -56,6 +56,7 @@ class Actor(IntEnum):
 class ActionType(IntEnum):
     NONE          = 0x00
     HALT          = 0x01
+    # Robotic arm joints (reserved; not used by Alvik)
     MOVE_JOINT_1  = 0x10
     MOVE_JOINT_2  = 0x11
     MOVE_JOINT_3  = 0x12
@@ -64,6 +65,12 @@ class ActionType(IntEnum):
     MOVE_JOINT_6  = 0x15
     GRIPPER_OPEN  = 0x20
     GRIPPER_CLOSE = 0x21
+    # Alvik mobile robot (0x30 range)
+    MOVE_FORWARD  = 0x30
+    MOVE_BACKWARD = 0x31
+    TURN_LEFT     = 0x32
+    TURN_RIGHT    = 0x33
+    STOP_MOTORS   = 0x34
 
 
 class AckStatus(IntEnum):

@@ -20,7 +20,10 @@ markers = [
 
 [tool.coverage.run]
 source = ["ipc", "perception", "governance"]
-omit = ["tests/*"]
+omit = [
+    "tests/*",
+    "perception/backends_impl.py",    # requires ultralytics / mediapipe (not in CI)
+]
 
 [tool.coverage.report]
 show_missing = true

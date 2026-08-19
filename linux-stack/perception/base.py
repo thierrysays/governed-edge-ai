@@ -23,6 +23,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Literal
 
+import numpy as np
+
 DetectionLabel = str
 DetectionType = Literal["object", "gesture", "pose"]
 
@@ -86,16 +88,16 @@ class PerceptionPipeline(ABC):
     backend_name: str = "unknown"
 
     @abstractmethod
-    def run(self, frame: object) -> list[DetectionResult]:
+    def run(self, frame: np.ndarray) -> list[DetectionResult]:
         """
-        Run inference on a single BGR uint8 frame (H×W×3 numpy array).
+        Run inference on a single BGR uint8 frame (H x W x 3 numpy array).
 
         Returns a list of DetectionResult objects, ordered by descending
         confidence. Returns an empty list if no detections pass the backend's
         internal filtering. Must not raise — return [] on inference error.
         """
 
-    def warm_up(self, frame: object) -> None:
+    def warm_up(self, frame: np.ndarray) -> None:
         """
         Optional: run one inference to prime JIT/NPU caches.
         Call once before the main capture loop. Default: calls run() once.
@@ -103,7 +105,7 @@ class PerceptionPipeline(ABC):
         self.run(frame)
 
     def _stamp(self, result: DetectionResult) -> DetectionResult:
-        """Return result with backend field populated (used by subclasses)."""
+        """Return result with backend populated (used by subclasses)."""
         return DetectionResult(
             detection_type=result.detection_type,
             label=result.label,

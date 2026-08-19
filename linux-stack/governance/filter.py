@@ -53,15 +53,17 @@ from perception.base import DetectionResult
 _DEFAULT_ACTION: tuple[ActionType, int] = (ActionType.HALT, 0)
 
 DEFAULT_COMMAND_MAP: dict[str, tuple[ActionType, int]] = {
-    # Object detections → safety halt (person or equipment in workspace)
+    # Object detections: any person or obstacle in path → emergency halt
     "person":           (ActionType.HALT, 0),
     "robot_part":       (ActionType.HALT, 0),
     "tool":             (ActionType.HALT, 0),
-    # Gesture commands
+    # Gesture commands for Alvik mobile robot
     "stop":             (ActionType.HALT, 0),
-    "thumbs_up":        (ActionType.GRIPPER_OPEN, 0),
-    "thumbs_down":      (ActionType.GRIPPER_CLOSE, 0),
-    # Pose detections → safety halt
+    "thumbs_up":        (ActionType.MOVE_FORWARD,  50),   # param: speed (%)
+    "thumbs_down":      (ActionType.MOVE_BACKWARD, 50),
+    "swipe_left":       (ActionType.TURN_LEFT,     45),   # param: degrees
+    "swipe_right":      (ActionType.TURN_RIGHT,    45),
+    # Pose detections: proximity breach → emergency halt
     "proximity_breach": (ActionType.HALT, 0),
 }
 

@@ -14,6 +14,8 @@ PerceptionPipeline.run) is what matters now.
 
 from __future__ import annotations
 
+import numpy as np
+
 from perception.base import DetectionResult, PerceptionPipeline
 
 
@@ -31,7 +33,7 @@ class StubObjectDetector(PerceptionPipeline):
     def __init__(self, confidence: float = 0.91) -> None:
         self._confidence = confidence
 
-    def run(self, frame: object) -> list[DetectionResult]:
+    def run(self, frame: np.ndarray) -> list[DetectionResult]:
         return [
             DetectionResult(
                 detection_type="object",
@@ -57,7 +59,7 @@ class StubGestureRecognizer(PerceptionPipeline):
     def __init__(self, confidence: float = 0.88) -> None:
         self._confidence = confidence
 
-    def run(self, frame: object) -> list[DetectionResult]:
+    def run(self, frame: np.ndarray) -> list[DetectionResult]:
         return [
             DetectionResult(
                 detection_type="gesture",
@@ -82,7 +84,7 @@ class StubPoseEstimator(PerceptionPipeline):
     def __init__(self, confidence: float = 0.76) -> None:
         self._confidence = confidence
 
-    def run(self, frame: object) -> list[DetectionResult]:
+    def run(self, frame: np.ndarray) -> list[DetectionResult]:
         return [
             DetectionResult(
                 detection_type="pose",
@@ -101,5 +103,5 @@ class NullPipeline(PerceptionPipeline):
 
     backend_name = "null"
 
-    def run(self, frame: object) -> list[DetectionResult]:
+    def run(self, frame: np.ndarray) -> list[DetectionResult]:
         return []
