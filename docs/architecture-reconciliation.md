@@ -2,7 +2,7 @@
 
 **Five boards, one job each: a rationale, and the deltas from the current codebase.**
 
-Version 1.0, 2026-08-19 · Status: **design only, nothing implemented**
+Version 1.1, 2026-08-19 · Status: **design only, nothing implemented**. Eight of eleven open questions now answered; see section 16.
 
 ---
 
@@ -110,9 +110,40 @@ The Hub is an I2C expander and nothing more, so removing it costs nothing on its
 - **Modulino Distance (ToF VL53L4CD)** gives a safety envelope **outside the vision pipeline**. Today `proximity_breach` comes from the pose model, so one model failure removes the proximity control along with the perception that should have caught it. A separate sensor is not correlated with a model bug.
 - **Modulino Movement (IMU LSM6DSOX)** gives **proof of stop**. Today the log records that a stop was commanded and acknowledged by the MCU that was asked to stop. An IMU records that the robot stopped moving. That is the difference between an assertion and an observation, and it is the same difference the design rule exists to protect.
 
-Both attach to the R4's Qwiic connector directly. **No Hub is needed for two modules**, and on the R4 they land on the governance bus rather than the decision host's, which is better than the diagram. Recommendation: drop the Hub, drop Buttons, Pixels and Buzzer as redundant with the R4, and **keep Distance and Movement**, wired to the R4.
+Both attach to the R4's Qwiic connector directly. **No Hub is needed for two modules**, and on the R4 they land on the governance bus rather than the decision host's, which is better than the diagram.
 
-If they are dropped as well, two controls in the mapping lose their implementation and `docs/governance-mapping.md` should say so rather than quietly leaving them listed.
+**Decided:** the Hub, Buttons, Pixels and Buzzer are dropped as redundant with the R4. **Distance and Movement are kept.** Distance wires to the R4's Qwiic connector. Movement is more complicated than it looks, and section 3.1 works it out.
+
+### 3.1 Movement, and the tether it implies
+
+Proof of stop has two requirements that pull against each other.
+
+- The IMU must be **on the Alvik**, because the Alvik's motion is the thing in question.
+- It must be **read by something that is not the Alvik**, because the governed component must not report on itself. This is the entire point: the Alvik already carries an LSM6DSOX. What the Modulino adds is not a second sensor, it is a second **reader**.
+
+Together those imply a wire from a moving robot to a fixed board, which on a wheeled robot is a tether.
+
+**Decided: wireless telemetry**, so the Alvik keeps its mobility. That choice has a consequence that has to be designed rather than assumed.
+
+#### The reader still cannot be the Alvik
+
+If the Alvik reads the Modulino over I2C and relays the values over BLE, the control collapses. The governed component is then reporting its own motion, which is what its built-in IMU already does, and the Modulino becomes a second sensor rather than a second reader. Nothing is gained.
+
+Two arrangements preserve the property:
+
+**(a) A remote sensor head on the Alvik.** A small MCU that owns the Modulino Movement over I2C and reports to the R4 over BLE. It rides on the Alvik and belongs to the R4: no shared code, no shared firmware update path, no I2C address the Alvik can reach. Effectively the R4's sensor extended onto the robot by radio rather than by cable. Costs one more board and a pairing step.
+
+**(b) Signed telemetry from a module the Alvik cannot forge.** Only works if the sensing element itself can attest to its readings, which a Modulino cannot. Not available with these parts.
+
+So (a) is the arrangement, and it should be recorded as a sixth board rather than discovered during assembly. **New open question**, section 15.
+
+#### A tether-free alternative worth considering first
+
+The ToF Distance module, mounted on the R4 and pointed at the robot rather than outward, observes that the robot stopped moving without touching it: the measured distance stops changing. That is independent proof of stop, from a fixed vantage, with no tether, no radio and no extra board, and it comes from a module already being bought.
+
+It is weaker in one respect, since it sees only motion along its axis and cannot detect rotation in place. It is stronger in another, since it does not depend on anything mounted on the robot at all, and a robot that has lost power still reports as stopped correctly.
+
+Recommendation: use the ToF for proof of stop first, and add the remote sensor head only if the axis limitation turns out to matter. That keeps the parts count at five boards and the control genuinely independent.
 
 ### Where the Nesso N1 fits
 
@@ -185,6 +216,10 @@ The design I built **fails open on power loss** and no test could have caught it
 
 **What replaces what.** `supervisor_kill_line()` returning a boolean becomes an I2C SET/RESET pair to address 0x2A with a 50 ms pulse. The latch's state is readable, so the system can tell whether the relay actually latched rather than assuming the command took. That read-back is a new control worth having: it closes the gap between *we commanded a stop* and *the stop happened*.
 
+**Decided: polled at a fixed cadence** from the arbiter's main loop. Deterministic, no interrupt latency inside the timing budget, and it detects a latch that silently failed to change state rather than only catching transitions. The cadence becomes a documented parameter, and a mismatch between commanded and observed position is itself an audit event.
+
+This assumes the module exposes a state register. **To confirm against the ABX00138 datasheet before step 11**, and if it does not, the fallback is a GPIO sense line across the contact, which is more wiring and gives the same property.
+
 ---
 
 ## 7. Delta register
@@ -235,7 +270,11 @@ Four properties have consequences beyond image quality, and three of them argue 
 
 **Rolling shutter.** Different rows of the frame are exposed at different instants. On a moving platform that produces skew, and it means a single frame does not represent a single moment. For a demonstrator this is acceptable; for a safety claim about *where something was when we decided to stop*, it is a real error term that no amount of model accuracy removes. It should be stated in the threat model alongside the other untested hardware claims rather than discovered later.
 
-**62.2° horizontal field of view.** Narrow. Anything outside that cone does not exist to the primary observer, and the audit log will faithfully record that nothing was detected. Two cameras can be arranged for stereo depth on one 62° cone or splayed for roughly 120° of coverage, and those are different safety arguments. The diagram says CSI 0 and CSI 1 without saying which. It needs deciding, because the choice determines what the phrase "safety envelope" actually covers.
+**62.2° horizontal field of view.** Narrow. Anything outside that cone does not exist to the primary observer, and the audit log will faithfully record that nothing was detected.
+
+**Decided: splayed for roughly 120° of coverage.** A safety envelope is mostly about not missing things, and the near-field depth that stereo would have provided comes from the ToF module instead, which also covers the band the camera cannot focus on. The overlap region in the middle still gives coarse disparity if it is ever wanted.
+
+Two consequences to write down. The splay angle becomes a **calibrated, documented parameter**, because the safety envelope is defined by it: change the mounting and the envelope changes silently. And the two cones leave a blind sector behind the robot, which the audit log cannot distinguish from an empty one. Both belong in the threat model.
 
 **Visible light only, with the IR filter fitted.** Perception degrades in low light, and a system that degrades silently is worse than one that fails loudly. The audit log already records confidence per detection, so a lighting collapse shows up as a confidence collapse, and the suppression rate already in the dashboard is the natural place to surface it. Worth an explicit threshold rather than leaving it to whoever reads the log.
 
@@ -259,13 +298,18 @@ The diagram demotes the UNO Q to **témoin** with its own webcam and its own mod
 
 Nothing in the codebase implements this. It is the largest single piece of new work and the most interesting, because it is a control most AI safety architectures lack: **two independent observers must agree before the system may act.**
 
-Questions the diagram does not settle:
+**Decided:**
 
-- **What counts as disagreement?** A different label, the same label at divergent confidence, or a detection present in one stream and absent from the other. The third is the common case and the hardest.
-- **Over what window?** Frame-synchronous comparison needs a shared clock the diagram does not show. A sliding-window agreement over N frames is more tractable and less brittle.
-- **What if the witness is silent?** Fail closed, by the same argument that governs the oversight link today.
-- **Veto or vote?** A veto is simpler and safer. A vote implies a tie-break, which implies a third opinion.
-- **How independent is the model?** Same architecture with different weights is much weaker than a different architecture. Independence is the entire value of the control.
+| Question | Answer |
+|---|---|
+| What counts as disagreement | **Absence.** A detection present in one stream and absent from the other. This is the common case, the hardest, and the one that matters: the primary observer missing something. |
+| Over what window | **Sliding window of N frames**, not frame-synchronous. No shared clock is needed, and a single dropped frame does not halt the rig. N becomes a documented parameter. |
+| Witness silent | **Fail closed**, by the same argument that governs the oversight link today. An observer that cannot be reached is not an observer that agrees. |
+| Veto or vote | **Veto.** No tie-break rule, so no third opinion required. |
+
+Choosing absence over label-mismatch has a consequence worth stating: the gate is asymmetric on purpose. The witness can stop the system by seeing something the primary missed, and it cannot start anything by agreeing. That is the right direction for a safety control, and it means a noisy witness costs availability rather than safety.
+
+**Still open:** how independent the witness model actually is. Same architecture with different weights is much weaker than a different architecture, because correlated failures are exactly what this control exists to catch. Section 15.
 
 Note that the diagram already builds sensor independence into the witness: the VENTUNO Q sees through two IMX219 modules on MIPI CSI, and the UNO Q sees through a **UVC webcam over USB**. Different sensor, different interface, different driver stack. A ribbon cable working loose, a CSI driver fault or an ISP misconfiguration takes out the primary observer and leaves the witness seeing. That asymmetry is deliberate and worth keeping when the webcam is chosen: a second IMX219 on CSI would be cheaper and much weaker.
 
@@ -312,7 +356,9 @@ That keeps the real principle, which was never "physical" but "the software path
 
 **Accepted risk, for the threat model.** A remote lift means whoever holds the Nesso, or its private key, can re-arm a halted robot from outside the room. The physical ARM button requires presence; this does not. The mitigations make forgery hard and every lift attributable. They do not make the channel equivalent to presence. This is a deliberate trade of safety margin for operational reach and belongs in `docs/architecture.md` section 12, in those words.
 
-**On the radio.** Wi-Fi 6 and BLE are short range. If the point is supervision from genuinely out of the room, LoRa is the radio for it, and a verdict stream plus an occasional signed lift is well inside what LoRa carries. Worth deciding rather than leaving the radio unused.
+**Decided: Wi-Fi 6**, as the diagram draws it. No extra hardware at the arbiter end, ample bandwidth for a verdict stream. The range is a room, so "out of band" here means off the decision path rather than out of the building, and the documentation should say that plainly rather than implying reach it does not have.
+
+The link is built transport-agnostic regardless, so LoRa remains available later if range turns out to matter. Only the carrier would change; the signed-lift protocol is the same.
 
 ---
 
@@ -322,7 +368,9 @@ The diagram says *journal d'audit signé*. The code has an unsigned SHA-256 chai
 
 **Where the key lives decides what the signature is worth.** On the VENTUNO Q it proves only that the journal was written by that host, since compromising the host compromises the key. On the R4 or the Nesso it proves the row was witnessed by something the decision path cannot impersonate.
 
-The Nesso needs a keypair for section 9 and already receives a digest stream. **Countersigning chain heads on the Nesso** is the economical answer: one key ceremony, one device, two controls.
+The Nesso needs a keypair for section 9 and already receives a digest stream. **Decided: the Nesso holds the only key**, and signs both chain heads and HALT lifts. One key ceremony, one device, two controls, and a signature that proves the row was witnessed by something the decision host cannot impersonate.
+
+The cost is concentration. Lose the Nesso and both controls stop until a new device is paired, and the journal is unsigned in the interim rather than wrongly signed. That failure mode is loud, which is the right kind. It does argue for a documented re-pairing procedure and for keeping the previous public key on file so that historical signatures stay verifiable after a device is replaced.
 
 ---
 
@@ -350,7 +398,13 @@ The diagram makes it the safety arbiter: Zephyr, sub-millisecond budget, owner o
 
 It is also blocked on the VENTUNO Q pinout, which `docs/build-log.md` has listed as open since day one.
 
-**This is why the R4 earns its place rather than merely keeping it.** The R4 is the arbiter now, in hardware that exists, with a state machine that is written and tested and a parity harness that holds the C++ to a Python specification. When the pinout lands, either the arbiter moves to the STM32H5 and the R4 becomes the human interface, or it stays where it is and the STM32H5 handles only the < 1 ms motor-side work. That decision can wait; the rig does not have to.
+**Decided: the R4 keeps the arbiter role permanently.** The STM32H5 handles only sub-millisecond motor-side work if and when it exists.
+
+The reason is the same one that moved the governance bus in section 3, and it is easy to miss. The STM32H5 is out of the Linux path, which is not the same as being off the decision host: it sits on the VENTUNO Q's board, sharing a PCB, a power rail and in all likelihood a reset domain with the process it arbitrates over. The separation is a firmware boundary. The R4 is a separate board with separate power, so the separation is physical.
+
+The trade is real and should be recorded as such. Arbitration on the R4 gives up the tightest achievable timing on the human and latch path. It buys a property that can be verified by looking at the wiring rather than by reading a datasheet, and for this project that is the more valuable of the two.
+
+A useful consequence: the arbiter is no longer blocked on the pinout. Steps 11 through 15 can proceed on hardware that exists.
 
 Timing is the one claim that cannot be validated hardware-free. A < 1 ms arbitration budget is an assertion about a real MCU until measured.
 
@@ -358,14 +412,15 @@ Timing is the one claim that cannot be validated hardware-free. A < 1 ms arbitra
 
 ## 13. Divergences from the diagram, stated plainly
 
-This configuration is not the diagram. Three differences are deliberate and one is provisional.
+This configuration is not the diagram. Every difference below is deliberate and settled.
 
 | Difference | Deliberate? | Why |
 |---|---|---|
 | Governance bus on the R4, not the VENTUNO Q Qwiic | Yes | Section 3. The decision host should have no electrical path to the safety modules. |
 | Modulino Hub, Buttons, Pixels, Buzzer removed | Yes | Redundant with the R4. Section 3. |
 | Distance and Movement on the R4 rather than the Hub | Yes | Same bus argument, fewer parts |
-| The R4 is the safety arbiter, not the STM32H5 | **Provisional** | Section 12. The STM32H5 is unwritten and pinout-blocked. |
+| The R4 is the safety arbiter, not the STM32H5 | Yes, now settled | Section 12. The STM32H5 is out of the Linux path but on the decision host's board; the R4 is a separate board with separate power. Physical separation over firmware separation. |
+| Movement reported wirelessly rather than over the Qwiic bus | Yes | Section 3.1. Keeps the Alvik mobile, at the cost of needing a reader on the robot that is not the robot. |
 
 The diagram should be reissued as v2 with the R4 and the Nesso in it, or this document should be linked from it, so that the published design and the built one do not drift apart again. That drift is what produced this document.
 
@@ -384,9 +439,11 @@ Each step is independently reviewable and leaves the tree green.
 | 14 | Audit journal signing, countersigned by the Nesso | A | 13 | M |
 | 15 | Distance and Movement: evidence outside the vision pipeline, proof of stop | B | 12 | M |
 | 16 | Witness UNO Q and the agreement gate | A | none, parallel | L |
-| 17 | STM32H5 Zephyr firmware, arbiter migration | A | pinout | L, blocked |
+| 17 | STM32H5 Zephyr firmware, sub-ms motor-side work only | B | pinout | M, blocked |
 
 Steps 10 to 16 are testable hardware-free on the existing pattern: real state machines behind pty and I2C mocks, with a parity harness for anything that also exists in C. Step 17 is not, and its timing claims stay claims until there is hardware.
+
+With the arbiter staying on the R4, step 17 is no longer on the critical path. It went from blocking the architecture to being an optimisation of the motor-side timing, which is the main practical gain from that decision.
 
 **One addition to the test strategy.** The GPIO line failing open on power loss was invisible because the mocks model logic, not electricity. The latch relay mock should model a power cycle explicitly, and a test should assert that the latch state survives one. Bugs of that class are found by modelling the failure, not by more coverage.
 
@@ -394,43 +451,65 @@ Steps 10 to 16 are testable hardware-free on the existing pattern: real state ma
 
 ## 15. Open questions
 
-Answers change the design, not just the wording. Several gate step 11.
+Eight of the original eleven are answered in section 16. Three remain, plus two raised by those answers.
 
-1. **Scénario C, Lot E.** The diagram's subtitle names a taxonomy absent from the repository. What are the other scenarios and lots, and does this sit inside that scheme?
-2. **Camera arrangement:** two IMX219 on one 62.2° cone for stereo depth, or splayed for roughly 120° of coverage? Different safety envelopes. Section 7.1.
-3. **IMX219 on Qualcomm CAMSS:** does the VENTUNO Q device tree bind the mainline IMX219 driver? Gates the whole CSI path; UVC is the fallback. Section 7.1.
-4. **Distance and Movement: keep or drop?** Section 3 recommends keeping both, wired to the R4, and section 7.1 strengthens the case for Distance. Dropping them removes two controls from `governance-mapping.md`.
-5. **Latch state read-back:** polled, interrupt-driven, or on demand? Affects the arbiter's timing budget. Section 6.
-6. **Witness disagreement:** what counts as disagreement, over what window, and does the witness hold a veto or a vote? Section 8.
-7. **Witness model independence:** different weights, or a different architecture? Section 8.
-8. **Nesso radio:** Wi-Fi 6 and BLE as drawn, or LoRa for genuine out-of-room range? Section 9.
-9. **Signing key custody:** Nesso, arbiter, or both? Section 10.
-10. **Arbiter migration:** does the R4 hand off to the STM32H5 when the pinout lands, or keep the role? Section 12.
-11. **Movement module mounting:** on the Alvik, read by the R4? It reads as an exception to the design rule and is not one, because the Alvik has no path to alter what it reports. Worth stating explicitly. Section 3.
+### Blocking
+
+1. **Scénario C, Lot E.** The diagram's subtitle names a taxonomy that appears nowhere in the repository. What are the other scenarios and lots, and does this reconciliation sit inside that scheme or replace part of it? Nobody but you can answer this, and it may change how the whole document is filed.
+
+2. **Witness model independence.** Different weights, or a different architecture? Correlated failure is exactly what the witness exists to catch, so two instances of the same model with different training data is a much weaker control than two different architectures. Gates step 16, not step 11.
+
+3. **Latch state register.** Does the ABX00138 expose one, as the polled read-back in section 6 assumes? Datasheet check. If not, the fallback is a GPIO sense line across the contact. Gates step 11.
+
+### Raised by the answers
+
+4. **Remote sensor head, or the ToF instead?** Section 3.1. Wireless Movement telemetry needs a reader on the Alvik that is not the Alvik, which means a sixth board. The ToF on the R4 gives tether-free proof of stop with no extra hardware, at the cost of missing rotation in place. Recommendation is to try the ToF first.
+
+5. **Camera splay angle.** Section 7.1. The safety envelope is defined by it, so it needs choosing, measuring and documenting rather than being set by whatever the mounting allows.
 
 ---
 
 ## 16. Decisions taken
 
-| Date | Decision | Rationale |
+### Configuration
+
+| Decision | Rationale |
+|---|---|
+| Five boards: UNO Q, VENTUNO Q, Alvik, UNO R4 WiFi, Nesso N1 | One job per board; no board both decides and enforces |
+| Modulino Hub, Buttons, Pixels, Buzzer removed | Redundant with the R4, which already has buttons, a matrix and a Qwiic port |
+| Governance modules attach to the R4, not the VENTUNO Q Qwiic bus | The decision host should have no electrical path to the safety modules |
+| Modulino Distance and Movement kept | The two Modulinos doing real work: a safety envelope outside the vision pipeline, and proof of stop |
+| The latch relay replaces the GPIO kill line into the Alvik | Bistable, survives power loss and reboot, needs no cooperation from the governed board |
+
+### Answered this round
+
+| Question | Decision | Consequence to carry |
 |---|---|---|
-| 2026-08-19 | Target is five boards: UNO Q, VENTUNO Q, Alvik, UNO R4 WiFi, Nesso N1 | One job per board; no board both decides and enforces |
-| 2026-08-19 | Modulino Hub, Buttons, Pixels and Buzzer removed | Redundant with the R4, which already has buttons, a matrix and a Qwiic port |
-| 2026-08-19 | Governance modules attach to the R4, not the VENTUNO Q Qwiic bus | The decision host should have no electrical path to the safety modules |
-| 2026-08-19 | The latch relay replaces the GPIO kill line into the Alvik | Bistable, survives power loss and reboot, needs no cooperation from the governed board |
-| 2026-08-19 | Design document before implementation | The delta is large enough that building first would waste work |
-| 2026-08-19 | The Nesso N1 **may** lift a HALT remotely | Operational reach, accepted against the loss of the presence requirement |
-| 2026-08-19 | A remote lift is asymmetrically signed, verified off the Linux path, bound to one episode, and audited | A compromised VENTUNO Q must not be able to forge a lift |
-| 2026-08-19 | The relay note is amended to *authenticated human gesture* | Resolves the contradiction without weakening the principle |
-| 2026-08-19 | `v2.0.0` is held unpublished | It presents the R4 as a tier wired to the Alvik, which this supersedes |
-| 2026-08-19 | Cameras sourced: Arducam IMX219 8 MP ×2 via Kubii | Matches the diagram; closes the oldest open item. Both ribbon adapters included. |
-| 2026-08-19 | Modulino Distance is upgraded from optional to recommended | The IMX219's 200 mm minimum focus leaves the near field, where the risk is highest, blurred. The ToF covers that band. |
+| Camera arrangement | **Splayed, roughly 120°** | Splay angle becomes a calibrated documented parameter; a blind sector behind the robot goes in the threat model |
+| Distance and Movement | **Keep both** | Movement needs the arrangement in section 3.1 |
+| Latch read-back | **Polled at fixed cadence** | Cadence is a documented parameter; commanded-versus-observed mismatch is an audit event. Needs a datasheet check. |
+| Safety arbiter | **The R4, permanently** | Gives up tightest timing; buys physical rather than firmware separation. Unblocks steps 11 to 15 from the pinout. |
+| Movement mounting | **Wireless telemetry** | Requires a non-Alvik reader on the robot, or the control collapses to self-reporting. Section 3.1. |
+| Witness disagreement | **Absence, sliding window, veto, fail closed** | Asymmetric by design: the witness can stop, never start. A noisy witness costs availability, not safety. |
+| Nesso radio | **Wi-Fi 6** | "Out of band" means off the decision path, not out of the building. Documentation should say so. |
+| Signing key custody | **Nesso only** | Concentration risk accepted; needs a documented re-pairing procedure and retained old public keys |
+
+### Standing
+
+| Decision | Rationale |
+|---|---|
+| Design document before implementation | The delta is large enough that building first would waste work |
+| The Nesso N1 **may** lift a HALT remotely | Operational reach, accepted against the loss of the presence requirement |
+| A remote lift is asymmetrically signed, verified off the Linux path, bound to one episode, and audited | A compromised VENTUNO Q must not be able to forge a lift |
+| The relay note is amended to *authenticated human gesture* | Resolves the contradiction without weakening the principle |
+| Cameras: Arducam IMX219 8 MP ×2 via Kubii | Matches the diagram; both ribbon adapters included |
+| `v2.0.0` is held unpublished | It presents the R4 as a tier wired to the Alvik, which this supersedes |
 
 ---
 
 ## 17. What this document does not do
 
-It changes no code and orders no hardware. It does not settle section 15, and six of those questions gate step 11.
+It changes no code and orders no hardware. Three of the five remaining questions in section 15 gate work: the latch state register gates step 11, witness model independence gates step 16, and the Scénario C taxonomy may change how this document is filed.
 
 The camera's rolling shutter, its 62.2° cone and its low-light behaviour are named here but not yet written into `docs/architecture.md` section 12, where the untested hardware claims live. Step 10 does that.
 
