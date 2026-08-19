@@ -2,7 +2,7 @@
 
 Reference architecture demonstrating that AI governance principles can be enforced in circuitry, not merely documented as policy.
 
-The stack runs across three Arduino boards: a UNO Q 4GB captures camera frames and runs the perception pipeline; a VENTUNO Q holds the governance filter and audit log; an Alvik mobile robot receives governance-approved commands and executes them. No actuation occurs without a prior audit log entry — enforced at the IPC protocol layer, not in policy.
+The stack runs across three Arduino boards: a UNO Q 4GB captures camera frames and runs the perception pipeline; a VENTUNO Q holds the governance filter and audit log; an Alvik mobile robot receives governance-approved commands and executes them. No actuation occurs without a prior audit log entry: enforced at the IPC protocol layer, not in policy.
 
 This project began with the Arduino VENTUNO Q announcement. It is the first embedded project from Glossolalie Advisory, and the premise is explicit: the governance frameworks argued for in boardrooms should survive contact with hardware.
 
@@ -38,18 +38,18 @@ UNO Q 4GB          VENTUNO Q              Alvik
 Camera (ISP)  ───►  GovernanceFilter  ───►  STM32F411
 Detection          AuditLogger (SQLite)    Motors / ToF / IMU
 (YOLO, Pose,       STM32H5 dual gate      CommandAck / Reject
- Gesture)          audit_ref ≥ 1 enforced
+ Gesture)          audit_ref >= 1 enforced
 ```
 
-Data flow: UNO Q 4GB captures frames → perception pipeline produces `DetectionResult` objects → sent to VENTUNO Q → `GovernanceFilter` logs to SQLite, gates on confidence, transmits audited `CommandRequest` → Alvik STM32F411 validates `audit_ref`, executes motor command, returns `CommandAck` or `CommandReject`.
+Data flow: UNO Q 4GB captures frames → perception pipeline produces `DetectionResult` objects → sent to VENTUNO Q over TCP → `GovernanceFilter` logs to SQLite, gates on confidence, transmits audited `CommandRequest` → Alvik STM32F411 validates `audit_ref`, executes motor command, returns `CommandAck` or `CommandReject`.
 
 ## Governance controls implemented
 
 | Control objective | Framework reference | Implementation |
 |---|---|---|
-| Log-before-act | ISO 42001 Clause 9.1 | `audit_ref` (SQLite rowid ≥ 1) obtained before any command frame is transmitted |
+| Log-before-act | ISO 42001 Clause 9.1 | `audit_ref` (SQLite rowid >= 1) obtained before any command frame is transmitted |
 | No actuation without audit | ISO 42001, NIST AI RMF GOVERN | STM32H5 rejects `CommandRequest` with `audit_ref = 0` at the protocol layer |
-| Confidence gate (dual-layer) | Defence-in-depth | Linux gate at 0.70 float64; STM32H5 gate at 0.70 float32 — independent enforcement |
+| Confidence gate (dual-layer) | Defence-in-depth | Linux gate at 0.70 float64; STM32H5 gate at 0.70 float32, independent enforcement |
 | One command per frame | Segregation of duties | Highest-confidence detection only; all others logged as suppressed |
 | Full suppression record | Auditability | Every detection logged regardless of whether a command was sent |
 | ACK/REJECT tracking | ISO 42001 monitoring | `stm32_ack` column updated after MCU response; NULL on timeout (forensically meaningful) |
@@ -57,71 +57,73 @@ Data flow: UNO Q 4GB captures frames → perception pipeline produces `Detection
 
 ## Software stack
 
-### Built and tested
+All eight build steps are complete.
 
 | Module | Location | Description |
 |---|---|---|
 | IPC codec | `linux-stack/ipc/codec.py` | Binary protocol, 8 message types, CRC-16/CCITT, `FrameParser` |
 | Mock STM32H5 | `linux-stack/ipc/mock_peer.py` | Pty-based hardware simulator, full state machine, kill-switch |
-| Perception pipeline | `linux-stack/perception/` | `DetectionResult` dataclass, stub backends, `PerceptionPipeline` ABC |
+| Perception interface | `linux-stack/perception/base.py` | `DetectionResult` dataclass, `PerceptionPipeline` ABC, stub backends |
+| Camera capture | `linux-stack/perception/capture.py` | V4L2, synthetic, and file frame sources |
+| Production backends | `linux-stack/perception/backends_impl.py` | YOLO-X, MediaPipe Hands, PoseNet (stub fallback in CI) |
+| DetectionResult transport | `linux-stack/perception/network.py` | Length-prefixed JSON over TCP (UNO Q to VENTUNO Q) |
+| UNO Q perception service | `linux-stack/perception/uno_q_service.py` | Multi-backend pipeline, stub fallback, camera loop |
 | Governance filter | `linux-stack/governance/filter.py` | `GovernanceFilter`, `DEFAULT_COMMAND_MAP`, log-before-act enforcement |
+| VENTUNO Q governance service | `linux-stack/governance/ventuno_q_service.py` | TCP receive, filter, IPC dispatch to Alvik |
 | Audit logger | `audit-service/logger.py` | SQLite WAL-mode, append-only, `AuditEvent`, session management |
 | Audit dashboard | `audit-service/dashboard/` | Flask read-only dashboard over the audit log |
+| Alvik IPC codec | `alvik-firmware/ipc_codec.py` | MicroPython-compatible subset, CPython-testable |
+| Alvik motor map | `alvik-firmware/motor_map.py` | Maps IPC action codes to `arduino_alvik` motor API |
+| Alvik firmware | `alvik-firmware/main.py` | Four governance gates, kill-switch GPIO, USB-C serial I/O |
 
-### Planned (next steps)
-
-| Step | Description |
-|---|---|
-| Step 7 | Alvik firmware (MicroPython or Arduino C): receive `CommandRequest` via USB-C, execute motor commands, return `CommandAck` / `CommandReject` |
-| Step 8 | UNO Q 4GB perception service: camera capture via ISP, run YOLO / MediaPipe / PoseNet, send `DetectionResult` objects to VENTUNO Q over the network |
-
-### Inference models (planned for Step 8)
+## Inference models
 
 - YOLO-X: object detection (person, robot_part, tool)
-- MediaPipe: gesture recognition (stop, thumbs_up, thumbs_down)
-- PoseNet: proximity safety boundary (proximity_breach)
-- Qualcomm AI Hub runtime: NPU-accelerated inference on VENTUNO Q
+- MediaPipe Hands: gesture recognition (stop, thumbs_up, thumbs_down, swipe_left, swipe_right)
+- MoveNet Lightning: proximity safety boundary (proximity_breach)
+- Stub backends: drop-in replacements for CI without model weights or hardware
 
 ## Repository structure
 
 ```
 governed-edge-ai/
-├── Makefile                    # make smoke | test | lint | typecheck | security | qa
+├── Makefile                       # make smoke | test | lint | typecheck | security | qa
 ├── docs/
-│   ├── build-log.md            # Step-by-step design decisions and QA results
-│   ├── cowork-session-summary.md
-│   └── cowork-bom-arduino.md   # Peripherals BOM (cameras, cables, power)
+│   ├── architecture.md            # Complete architecture and functional specification
+│   ├── build-log.md               # Step-by-step design decisions and QA results
+│   ├── ipc-protocol.md            # IPC binary protocol reference
+│   ├── governance-mapping.md      # Framework control mapping
+│   └── cowork-bom-arduino.md      # Peripherals BOM (cameras, cables, power)
+├── alvik-firmware/
+│   ├── ipc_codec.py               # MicroPython IPC codec (CPython-testable)
+│   ├── motor_map.py               # IPC action code to motor API mapping
+│   ├── main.py                    # Alvik governance firmware
+│   └── pyproject.toml
 ├── audit-service/
-│   ├── logger.py               # AuditLogger, AuditEvent, session management
-│   ├── dashboard/              # Flask read-only audit dashboard
+│   ├── logger.py                  # AuditLogger, AuditEvent, session management
+│   ├── dashboard/                 # Flask read-only audit dashboard
 │   ├── requirements.txt
 │   ├── pyproject.toml
-│   └── tests/                  # 148 tests
+│   └── tests/                     # 148 tests
 └── linux-stack/
-    ├── ipc/                    # Binary IPC codec + MockSTM32H5
-    ├── perception/             # DetectionResult, stub backends
-    ├── governance/             # GovernanceFilter
+    ├── ipc/                       # Binary IPC codec + MockSTM32H5
+    ├── perception/                # DetectionResult, backends, capture, TCP transport, UNO Q service
+    ├── governance/                # GovernanceFilter, VENTUNO Q service
     ├── requirements.txt
     ├── pyproject.toml
-    └── tests/                  # 36 governance tests + smoke suite
+    └── tests/                     # 241 tests
 ```
 
 ## QA baseline
 
-184 tests · 97% coverage · ruff clean · mypy clean · bandit clean · pip-audit clean
+241 tests · 95.76% coverage · ruff clean · mypy clean · bandit clean · pip-audit clean
 
 ```bash
 make qa        # lint + typecheck + security + full test suite
 make smoke     # fast sanity pass, hardware-free
 ```
 
-## Open decisions
-
-- Camera module for UNO Q 4GB ISP: Arduino native or third-party (Arducam)?
-- UNO Q 4GB ↔ VENTUNO Q transport: Wi-Fi (UDP/gRPC) or USB-C UART?
-- Alvik firmware language: MicroPython or Arduino C?
-- Alvik `CommandRequest` reception: USB-C serial or Bluetooth 5.1?
-- Confidence threshold calibration: 0.70 is an engineering default; no published standard maps confidence to injury probability for human-robot collaboration
+All tests run without physical hardware. CI reproduces the full stack: synthetic camera frames, pty-based mock STM32H5, loopback TCP transport.
 
 ## Author
 
