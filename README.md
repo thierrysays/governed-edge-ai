@@ -2,7 +2,7 @@
 
 Reference architecture demonstrating that AI governance principles can be enforced in circuitry, not merely documented as policy.
 
-The stack runs across three Arduino boards: a UNO Q 4GB captures camera frames and runs the perception pipeline; a VENTUNO Q holds the governance filter and audit log; an Alvik mobile robot receives governance-approved commands and executes them. No actuation occurs without a prior audit log entry — enforced at the IPC protocol layer, not in policy.
+The stack runs across three Arduino boards: a UNO Q 4GB captures camera frames and runs the perception pipeline; a VENTUNO Q holds the governance filter and audit log; an Alvik mobile robot receives governance-approved commands and executes them. No actuation occurs without a prior audit log entry: enforced at the IPC protocol layer, not in policy.
 
 This project began with the Arduino VENTUNO Q announcement. It is the first embedded project from Glossolalie Advisory, and the premise is explicit: the governance frameworks argued for in boardrooms should survive contact with hardware.
 
@@ -49,7 +49,7 @@ Data flow: UNO Q 4GB captures frames → perception pipeline produces `Detection
 |---|---|---|
 | Log-before-act | ISO 42001 Clause 9.1 | `audit_ref` (SQLite rowid ≥ 1) obtained before any command frame is transmitted |
 | No actuation without audit | ISO 42001, NIST AI RMF GOVERN | STM32H5 rejects `CommandRequest` with `audit_ref = 0` at the protocol layer |
-| Confidence gate (dual-layer) | Defence-in-depth | Linux gate at 0.70 float64; STM32H5 gate at 0.70 float32 — independent enforcement |
+| Confidence gate (dual-layer) | Defence-in-depth | Linux gate at 0.70 float64; STM32H5 gate at 0.70 float32, independent enforcement |
 | One command per frame | Segregation of duties | Highest-confidence detection only; all others logged as suppressed |
 | Full suppression record | Auditability | Every detection logged regardless of whether a command was sent |
 | ACK/REJECT tracking | ISO 42001 monitoring | `stm32_ack` column updated after MCU response; NULL on timeout (forensically meaningful) |

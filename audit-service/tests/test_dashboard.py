@@ -2,7 +2,7 @@
 Tests for audit-service/dashboard/app.py.
 
 Uses FastAPI TestClient with a dependency override that points get_db at
-a temp SQLite DB pre-populated by AuditLogger — the same write path used
+a temp SQLite DB pre-populated by AuditLogger: the same write path used
 in production.
 """
 
@@ -122,7 +122,7 @@ class TestSessions:
 
     def test_ended_at_is_null(self, client):
         c, _ = client
-        # Session not closed in seeded fixture — ended_at should be None
+        # Session not closed in seeded fixture: ended_at should be None
         assert c.get("/sessions").json()[0]["ended_at"] is None
 
 

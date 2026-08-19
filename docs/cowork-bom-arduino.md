@@ -1,4 +1,4 @@
-# Cowork Task — Arduino Store BOM for governed-edge-ai (Peripherals Only)
+# Cowork Task: Arduino Store BOM for governed-edge-ai (Peripherals Only)
 
 ## Context
 
@@ -6,10 +6,10 @@ I am building a Physical AI safety demonstrator called **governed-edge-ai** usin
 
 **Project repo (public):** https://github.com/thierrysays/governed-edge-ai
 
-**All three main boards are already owned — do not include them in the BOM:**
-- Arduino VENTUNO Q (Qualcomm IQ8 NPU 40 TOPS + STM32H5, 16 GB RAM) — Governance Brain
-- Arduino UNO Q 4GB (Qualcomm QRB2210 + STM32U585, dual ISP 13 MP, 4 GB) — Perception Node
-- Arduino Alvik (ESP32-S3 + STM32F411, mobile robot) — Physical Body
+**All three main boards are already owned: do not include them in the BOM:**
+- Arduino VENTUNO Q (Qualcomm IQ8 NPU 40 TOPS + STM32H5, 16 GB RAM): Governance Brain
+- Arduino UNO Q 4GB (Qualcomm QRB2210 + STM32U585, dual ISP 13 MP, 4 GB): Perception Node
+- Arduino Alvik (ESP32-S3 + STM32F411, mobile robot): Physical Body
 
 ---
 
@@ -29,7 +29,7 @@ Data flow: UNO Q 4GB captures camera frames → runs initial detection → sends
 
 ## What Still Needs to Be Purchased (Peripherals Only)
 
-### 1. Camera module(s) for UNO Q 4GB — CRITICAL
+### 1. Camera module(s) for UNO Q 4GB: CRITICAL
 
 The UNO Q 4GB has **2× ISP at 13 MP / 30 fps**. Without a camera, the perception node has no visual input.
 
@@ -37,8 +37,8 @@ The UNO Q 4GB has **2× ISP at 13 MP / 30 fps**. Without a camera, the perceptio
 - Any camera module officially listed as compatible with the UNO Q 4GB
 - Look for: CSI ribbon cable camera, MIPI camera module, or any camera shield for UNO Q
 - Search terms: "camera", "UNO Q camera", "CSI camera", "IMX", "OV"
-- Need at minimum **1 camera** (ideally 2 to use both ISP channels — one for object detection, one for gesture/pose)
-- Note if no camera is sold by Arduino — I will need to source from a third party (e.g. Arducam, Waveshare)
+- Need at minimum **1 camera** (ideally 2 to use both ISP channels: one for object detection, one for gesture/pose)
+- Note if no camera is sold by Arduino: I will need to source from a third party (e.g. Arducam, Waveshare)
 
 ### 2. Interconnect cables
 
@@ -63,9 +63,9 @@ The UNO Q 4GB has **2× ISP at 13 MP / 30 fps**. Without a camera, the perceptio
 
 ### 4. Optional accessories
 
-- **MicroSD card** — for persistent audit log storage beyond SQLite on the VENTUNO Q (if a slot is available)
-- **Mounting hardware / enclosure** — to fix the UNO Q 4GB and VENTUNO Q together for stable demos
-- **Ethernet adapter** — if Wi-Fi is not used for UNO Q ↔ VENTUNO Q communication (USB-C Ethernet dongle)
+- **MicroSD card**: for persistent audit log storage beyond SQLite on the VENTUNO Q (if a slot is available)
+- **Mounting hardware / enclosure**: to fix the UNO Q 4GB and VENTUNO Q together for stable demos
+- **Ethernet adapter**: if Wi-Fi is not used for UNO Q ↔ VENTUNO Q communication (USB-C Ethernet dongle)
 
 ---
 
@@ -73,7 +73,7 @@ The UNO Q 4GB has **2× ISP at 13 MP / 30 fps**. Without a camera, the perceptio
 
 1. Go to **https://store.arduino.cc**
 2. For each of the four categories above, find matching products and note name, SKU, price, and stock status
-3. Pay particular attention to **camera compatibility with the UNO Q 4GB** — this is the most critical unknown
+3. Pay particular attention to **camera compatibility with the UNO Q 4GB**: this is the most critical unknown
 4. If an item is not available on the Arduino store, note it clearly so I can source it elsewhere
 
 ---
@@ -87,8 +87,8 @@ Produce a complete **Bill of Materials (BOM)** covering peripherals only:
 | 1 | Camera module (UNO Q ISP) | ... | ... | 1–2 | ... | Visual input for perception pipeline | ... |
 | 2 | USB-C cable (UNO Q ↔ VENTUNO Q) | ... | ... | 1 | ... | Board interconnect | ... |
 | 3 | USB-C cable (VENTUNO Q ↔ Alvik) | ... | ... | 1 | ... | IPC channel to robot | ... |
-| 4 | Power supply — UNO Q 4GB | ... | ... | 1 | ... | Power | ... |
-| 5 | Power supply — VENTUNO Q | ... | ... | 1 | ... | Power | ... |
+| 4 | Power supply: UNO Q 4GB | ... | ... | 1 | ... | Power | ... |
+| 5 | Power supply: VENTUNO Q | ... | ... | 1 | ... | Power | ... |
 | ... | | | | | | | |
 | | | | **TOTAL** | | **€XX.XX** | | |
 

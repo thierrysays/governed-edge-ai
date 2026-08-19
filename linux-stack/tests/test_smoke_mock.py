@@ -47,7 +47,7 @@ def test_heartbeat_roundtrip():
 
 @pytest.mark.smoke
 def test_log_before_act_enforced():
-    """COMMAND_REQUEST with audit_ref=0 is rejected — log-before-act invariant."""
+    """COMMAND_REQUEST with audit_ref=0 is rejected: log-before-act invariant."""
     with MockSTM32H5(watchdog_ms=2000) as peer:
         fd = os.open(peer.device, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
         try:

@@ -1,5 +1,5 @@
 """
-Governed Edge AI — Audit Dashboard API.
+Governed Edge AI: Audit Dashboard API.
 
 Read-only access to the audit log for the browser dashboard.
 Human-reviewer flag annotation is the only write path.
@@ -10,7 +10,7 @@ Routes:
   GET  /sessions
   GET  /events          ?session_id= &actor= &flagged= &limit= &offset=
   POST /events/{id}/flag
-  GET  /query           ?q=<natural language>   (LLM stub — Step 5)
+  GET  /query           ?q=<natural language>   (LLM stub: Step 5)
 """
 
 import os
@@ -43,12 +43,12 @@ DB_PATH: Path = Path(os.environ.get("AUDIT_DB_PATH", _DEFAULT_DB))
 # ---------------------------------------------------------------------------
 
 app = FastAPI(
-    title="Governed Edge AI — Audit Dashboard",
+    title="Governed Edge AI: Audit Dashboard",
     description="Read-only view of the append-only governance audit log.",
     version="0.1.0",
 )
 
-# LAN-only — restrict origins in production via ALLOWED_ORIGINS env var
+# LAN-only: restrict origins in production via ALLOWED_ORIGINS env var
 _origins = os.environ.get("ALLOWED_ORIGINS", "*").split(",")
 app.add_middleware(
     CORSMiddleware,

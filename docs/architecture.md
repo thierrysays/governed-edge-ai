@@ -1,6 +1,6 @@
-# governed-edge-ai — Architecture & Functional Specification
+# governed-edge-ai: Architecture & Functional Specification
 
-**Version:** 1.0 — 2026-08-19
+**Version:** 1.0, 2026-08-19
 **Status:** Steps 1–6 fully implemented and tested. Steps 7–8 planned.
 
 ---
@@ -30,7 +30,7 @@
 
 ## 1. System Overview
 
-**governed-edge-ai** demonstrates that AI governance invariants can be enforced at the hardware and protocol level — not merely documented as policy. The central claim: in a physical AI system, no actuator command should be executable without a prior, confirmed audit log entry. This project implements and proves that claim across three physical boards.
+**governed-edge-ai** demonstrates that AI governance invariants can be enforced at the hardware and protocol level: not merely documented as policy. The central claim: in a physical AI system, no actuator command should be executable without a prior, confirmed audit log entry. This project implements and proves that claim across three physical boards.
 
 ### Core invariant
 
@@ -103,7 +103,7 @@ All three boards are owned. No external actuator required beyond Alvik's built-i
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│  TIER 1 — PERCEPTION  (UNO Q 4GB, Qualcomm QRB2210 Linux)           │
+│  TIER 1: PERCEPTION  (UNO Q 4GB, Qualcomm QRB2210 Linux)           │
 │                                                                      │
 │  Camera (ISP)  ──►  PerceptionPipeline  ──►  DetectionResult[]      │
 │   YOLO-X (object)    MediaPipe (gesture)    PoseNet (pose)           │
@@ -113,7 +113,7 @@ All three boards are owned. No external actuator required beyond Alvik's built-i
                                    │  DetectionResult[]
                                    ▼
 ┌──────────────────────────────────────────────────────────────────────┐
-│  TIER 2 — GOVERNANCE  (VENTUNO Q, Qualcomm IQ8 NPU + STM32H5)       │
+│  TIER 2: GOVERNANCE  (VENTUNO Q, Qualcomm IQ8 NPU + STM32H5)       │
 │                                                                      │
 │  GovernanceFilter                                                    │
 │    ├─ sort by confidence (desc)                                      │
@@ -131,7 +131,7 @@ All three boards are owned. No external actuator required beyond Alvik's built-i
                                    │  CommandRequest frame (binary IPC)
                                    ▼
 ┌──────────────────────────────────────────────────────────────────────┐
-│  TIER 3 — ACTUATION  (Alvik, ESP32-S3 + STM32F411)                  │
+│  TIER 3: ACTUATION  (Alvik, ESP32-S3 + STM32F411)                  │
 │                                                                      │
 │  STM32F411 receives CommandRequest                                   │
 │    ├─ validate audit_ref ≠ 0                                         │
@@ -190,7 +190,7 @@ Transport-agnostic binary frame codec. `encode()` produces bytes; `FrameParser` 
 
 ### 4.2 MockSTM32H5 (`linux-stack/ipc/mock_peer.py`)
 
-Unix pty-based hardware simulator. Opened as a file descriptor — identical interface to a real UART device. Runs a reader thread that processes incoming frames, enforces the same state machine as the real firmware, and writes responses.
+Unix pty-based hardware simulator. Opened as a file descriptor: identical interface to a real UART device. Runs a reader thread that processes incoming frames, enforces the same state machine as the real firmware, and writes responses.
 
 **State machine:**
 
@@ -206,10 +206,10 @@ BUSY ─────────────────────────
   ▼
 ARMED
 
-FAULT (any system error — terminal state until reset)
+FAULT (any system error, terminal state until reset)
 ```
 
-**Confidence gate:** threshold 0.70 in float32. The mock applies this independently of the Linux gate. Sending `confidence=0.70` (float64) encodes to slightly below 0.70 in float32 on the wire — the mock rejects it (`CONFIDENCE_BELOW_THRESHOLD`).
+**Confidence gate:** threshold 0.70 in float32. The mock applies this independently of the Linux gate. Sending `confidence=0.70` (float64) encodes to slightly below 0.70 in float32 on the wire; the mock rejects it (`CONFIDENCE_BELOW_THRESHOLD`).
 
 **Watchdog:** configurable `watchdog_ms`. If no `Heartbeat` is received within the window, the mock transitions to HALTED and sends `HaltNotify(WATCHDOG)`.
 
@@ -226,7 +226,7 @@ with MockSTM32H5(watchdog_ms=10_000.0) as peer:
 
 ### 4.3 Perception Pipeline (`linux-stack/perception/`)
 
-**`DetectionResult`** — frozen dataclass, the unit of perception output:
+**`DetectionResult`**: frozen dataclass, the unit of perception output:
 
 ```python
 @dataclass(frozen=True)
@@ -238,7 +238,7 @@ class DetectionResult:
     def passes_threshold(self, threshold: float) -> bool: ...
 ```
 
-**`PerceptionPipeline`** — ABC enforcing `run(frame) -> list[DetectionResult]`. Swap any backend without touching the governance layer.
+**`PerceptionPipeline`**: ABC enforcing `run(frame) -> list[DetectionResult]`. Swap any backend without touching the governance layer.
 
 **Stub backends (for testing without cameras or models):**
 
@@ -247,7 +247,7 @@ class DetectionResult:
 | `StubObjectDetector` | `person` / `object` | configurable |
 | `StubGestureRecognizer` | `thumbs_up` | configurable |
 | `StubPoseEstimator` | `proximity_breach` | configurable |
-| `NullPipeline` | (none) | — |
+| `NullPipeline` | (none) | N/A |
 
 **Planned real backends (Step 8):**
 
@@ -263,7 +263,7 @@ class DetectionResult:
 
 The central safety gate. Sits between the perception pipeline output and the IPC channel. See [Section 7](#7-governance-contract) for the full governance contract.
 
-**Default command map** (safety-conservative — unknown labels default to HALT):
+**Default command map** (safety-conservative: unknown labels default to HALT):
 
 | Label | Detection type | Command | Rationale |
 |---|---|---|---|
@@ -322,8 +322,8 @@ Append-only SQLite WAL-mode log. The write path is the only path that creates or
 
 **Guarantees:**
 - `log_event()` returns a SQLite rowid which is always ≥ 1. A zero return is impossible under normal SQLite operation.
-- `update_stm32_ack()` only writes if `stm32_ack IS NULL` — prevents overwriting a confirmed ACK.
-- `flag_event()` uses `SET flag = 1` — cannot move 1 → 0.
+- `update_stm32_ack()` only writes if `stm32_ack IS NULL`, preventing overwriting a confirmed ACK.
+- `flag_event()` uses `SET flag = 1`; cannot move 1 to 0.
 - No `DELETE` or truncation statements exist anywhere in the codebase.
 
 ---
@@ -386,7 +386,7 @@ Polynomial: `0x1021`. Initial value: `0xFFFF`. Computed over all bytes from the 
 
 ### Confidence float32 edge case
 
-The `confidence` field is encoded as IEEE 754 float32 on the wire. The value `0.70` in Python (float64) is approximately `0.6999999999999999555910790149937383830547332763671875`. Encoded as float32, it becomes `0.699999988079071044921875` — slightly below `0.70`. The STM32 dual-layer gate, operating on the float32 value, rejects this as `CONFIDENCE_BELOW_THRESHOLD` even if the Linux gate passed it. This is the intended defence-in-depth behaviour, and is covered by a regression test (`test_low_confidence_float32_round_trip_rejected_by_stm32`).
+The `confidence` field is encoded as IEEE 754 float32 on the wire. The value `0.70` in Python (float64) is approximately `0.6999999999999999555910790149937383830547332763671875`. Encoded as float32, it becomes `0.699999988079071044921875`: slightly below `0.70`. The STM32 dual-layer gate, operating on the float32 value, rejects this as `CONFIDENCE_BELOW_THRESHOLD` even if the Linux gate passed it. This is the intended defence-in-depth behaviour, and is covered by a regression test (`test_low_confidence_float32_round_trip_rejected_by_stm32`).
 
 ---
 
@@ -417,7 +417,7 @@ The `confidence` field is encoded as IEEE 754 float32 on the wire. The value `0.
 | `command_sent` | INTEGER | 0 \| 1 | Whether the command was transmitted |
 | `stm32_ack` | INTEGER (nullable) | 0 \| 1 \| NULL | MCU response: 1=ACK, 0=REJECT, NULL=no response |
 | `flag` | INTEGER | 0 \| 1, default 0 | Human review flag (one-way: 0→1 only) |
-| `notes` | TEXT (nullable) | — | Annotations |
+| `notes` | TEXT (nullable) | N/A | Annotations |
 
 ### Indexes
 
@@ -457,7 +457,7 @@ If `log_event()` raises (disk full, database locked, schema violation), the exce
 
 ### Invariant 3: Confidence gate (Linux side)
 
-`should_send` is `False` for any detection where `detection.passes_threshold(self._threshold)` returns `False`. Suppressed detections are still logged with `command_sent=False` — the suppression decision is on record for forensic analysis.
+`should_send` is `False` for any detection where `detection.passes_threshold(self._threshold)` returns `False`. Suppressed detections are still logged with `command_sent=False`; the suppression decision is on record for forensic analysis.
 
 ### Invariant 4: One command per frame
 
@@ -662,18 +662,18 @@ All tests run without physical hardware. The `MockSTM32H5` provides the STM32H5 
 
 ### Key test patterns
 
-**Timeout path (no peer response)** — uses an OS pipe write-end only. The governance filter can write frames but never receives a response:
+**Timeout path (no peer response)**: uses an OS pipe write-end only. The governance filter can write frames but never receives a response:
 
 ```python
 rfd, wfd = os.pipe()
 wfile = open(wfd, "wb", buffering=0)
 gov = GovernanceFilter(..., channel=wfile, response_timeout_s=0.05)
 gov.process_frame([det(confidence=0.91)])
-# stm32_ack is NULL in audit_log — timeout confirmed
+# stm32_ack is NULL in audit_log: timeout confirmed
 os.close(rfd); wfile.close()
 ```
 
-**Float32 rounding regression** — verifies the dual-gate edge case is caught:
+**Float32 rounding regression**: verifies the dual-gate edge case is caught:
 
 ```python
 gov.process_frame([det(confidence=0.70)])
@@ -682,7 +682,7 @@ assert row["command_sent"] == 1   # Linux gate passed it
 assert row["stm32_ack"] == 0     # MCU gate caught the float32 rounding
 ```
 
-**Kill-switch reject** — uses `MockSTM32H5.trigger_kill_switch()`:
+**Kill-switch reject**: uses `MockSTM32H5.trigger_kill_switch()`:
 
 ```python
 peer.trigger_kill_switch()
@@ -696,7 +696,7 @@ assert row["stm32_ack"] == 0     # MCU rejected (KILL_SWITCH_ACTIVE)
 
 ## 11. Planned Extensions (Steps 7–8)
 
-### Step 7 — Alvik firmware
+### Step 7: Alvik firmware
 
 **Goal:** make the Alvik respond to `CommandRequest` frames over USB-C serial, execute motor commands, and return `CommandAck` or `CommandReject`.
 
@@ -714,7 +714,7 @@ assert row["stm32_ack"] == 0     # MCU rejected (KILL_SWITCH_ACTIVE)
 
 **Governance constraint:** the Alvik STM32F411 must enforce the same two checks as all other STM32 implementations: `audit_ref ≠ 0` and independent float32 confidence gate. A third `RejectReason.AUDIT_REF_ZERO` response confirms the protocol invariant survives to Tier 3.
 
-### Step 8 — UNO Q 4GB perception service
+### Step 8: UNO Q 4GB perception service
 
 **Goal:** replace the stub backends with real camera-driven inference on the UNO Q 4GB, and send `DetectionResult` objects to the VENTUNO Q governance filter over the network.
 
@@ -742,7 +742,7 @@ VENTUNO Q (IQ8 NPU Linux):
 
 | Decision | Options | Current default |
 |---|---|---|
-| UNO Q 4GB camera module | Arduino native / Arducam MIPI / Waveshare | Unknown — pending store research |
+| UNO Q 4GB camera module | Arduino native / Arducam MIPI / Waveshare | Unknown: pending store research |
 | UNO Q 4GB ↔ VENTUNO Q transport | Wi-Fi UDP / gRPC / USB-C UART | Wi-Fi (to be validated) |
 | Alvik firmware language | MicroPython / Arduino C | TBD |
 | Alvik IPC reception transport | USB-C serial / Bluetooth 5.1 | USB-C (simpler, deterministic) |

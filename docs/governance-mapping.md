@@ -6,7 +6,7 @@ This document maps each control objective to its implementation in the codebase.
 
 | Abbreviation | Full name |
 |---|---|
-| ISO 42001 | ISO/IEC 42001:2023 — AI management systems |
+| ISO 42001 | ISO/IEC 42001:2023: AI management systems |
 | COBIT APO | COBIT 2019, Align, Plan and Organise domain |
 | COBIT DSS | COBIT 2019, Deliver, Service and Support domain |
 | TOGAF | The Open Group Architecture Framework, governance layer |

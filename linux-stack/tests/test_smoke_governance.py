@@ -1,5 +1,5 @@
 """
-Smoke tests for the governance filter — fast end-to-end sanity pass.
+Smoke tests for the governance filter: fast end-to-end sanity pass.
 
 Each test exercises one complete governance path. These run first in CI
 (marker: smoke) to catch catastrophic failures before the full suite.

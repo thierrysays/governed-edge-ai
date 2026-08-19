@@ -1,9 +1,9 @@
-# Governed Edge AI — Cowork Session Summary
+# Governed Edge AI: Cowork Session Summary
 
 **Project:** governed-edge-ai Physical AI Demonstrator
 **Repository:** github.com/thierrysays/governed-edge-ai (public, main branch)
 **Session date:** 5 August 2026
-**Status:** Complete — all six build steps shipped, main branch live, content deliverables produced
+**Status:** Complete: all six build steps shipped, main branch live, content deliverables produced
 
 ---
 
@@ -19,7 +19,7 @@ Stack: Python 3.11, SQLite WAL-mode, binary UART IPC with CRC-16/CCITT, pytest, 
 
 ## Build Sequence (Six Commits to Main)
 
-### Step 1 — Audit Logger (`audit-service/logger.py`)
+### Step 1: Audit Logger (`audit-service/logger.py`)
 
 Append-only SQLite audit service in WAL mode. The central building block everything else depends on.
 
@@ -34,7 +34,7 @@ QA: 148 tests across logger, dashboard, and smoke suites. Full coverage.
 
 ---
 
-### Step 2 — IPC Codec (`linux-stack/ipc/codec.py`)
+### Step 2: IPC Codec (`linux-stack/ipc/codec.py`)
 
 Binary protocol between the Linux NPU and the STM32H5 co-processor. Eight message types:
 
@@ -55,7 +55,7 @@ Critical design decision: `audit_ref=0` is a reserved sentinel. The STM32H5 reje
 
 ---
 
-### Step 3 — Dashboard (`audit-service/dashboard/`)
+### Step 3: Dashboard (`audit-service/dashboard/`)
 
 Flask/SQLAlchemy read-only dashboard over the audit log. Intentionally read-only: the governance filter writes via `AuditLogger`; the dashboard only reads.
 
@@ -63,7 +63,7 @@ Views: session list with event counts, chronological event stream (detection lab
 
 ---
 
-### Step 4 — Mock STM32H5 Peer (`linux-stack/ipc/mock_peer.py`)
+### Step 4: Mock STM32H5 Peer (`linux-stack/ipc/mock_peer.py`)
 
 Unix pty-based hardware simulator. Behaves identically to the real co-processor: decodes `CommandRequest` frames, enforces its own confidence gate in float32, manages state machine (ARMED → BUSY → HALTED/FAULT), responds with `CommandAck` or `CommandReject`.
 
@@ -82,7 +82,7 @@ Enables the entire test suite to run without hardware.
 
 ---
 
-### Step 5 — Perception Pipeline (`linux-stack/perception/`)
+### Step 5: Perception Pipeline (`linux-stack/perception/`)
 
 Minimal typed detection layer. ABC enforces `run(frame) -> list[DetectionResult]` across all backends.
 
@@ -106,18 +106,18 @@ Any of these can be swapped for a real backend (YOLO, MediaPipe, a custom NPU mo
 
 ---
 
-### Step 6 — Governance Filter (`linux-stack/governance/filter.py`)
+### Step 6: Governance Filter (`linux-stack/governance/filter.py`)
 
 The safety gate. Sits between the perception pipeline and the IPC channel. Enforces six non-negotiable invariants:
 
 1. **Log-before-act**: `audit_ref` is obtained from `logger.log_event()` before any `CommandRequest` frame is transmitted. If `log_event()` raises, the exception propagates and no frame is sent.
-2. **No log, no command**: enforced structurally — send happens inside the `if should_send:` block that follows the log call.
+2. **No log, no command**: enforced structurally; send happens inside the `if should_send:` block that follows the log call.
 3. **Confidence gate (Linux side)**: detections below threshold are logged with `command_sent=False`. Suppression is on record.
 4. **One command per frame**: highest-confidence detection that clears the threshold is selected. All others logged as suppressed.
 5. **Dual-layer gate**: Linux gate and STM32H5 gate operate independently (defence-in-depth).
 6. **ACK/REJECT tracking**: `update_stm32_ack()` called exactly once per transmitted command. Timeout leaves `stm32_ack` NULL.
 
-Default command map (safety-conservative — unknown labels default to HALT):
+Default command map (safety-conservative; unknown labels default to HALT):
 
 | Label | Command |
 |---|---|
@@ -128,7 +128,7 @@ Default command map (safety-conservative — unknown labels default to HALT):
 | `proximity_breach` (pose) | HALT |
 | *(anything else)* | HALT |
 
-36 unit tests + 7 smoke tests covering: empty frame, confidence gate (both sides of threshold), all default command mappings, custom maps, multi-detection frame sorting, log-before-act integrity, kill-switch rejection, float32 rounding rejection, and the timeout path (tested via OS pipe — write-only channel that never returns a response).
+36 unit tests + 7 smoke tests covering: empty frame, confidence gate (both sides of threshold), all default command mappings, custom maps, multi-detection frame sorting, log-before-act integrity, kill-switch rejection, float32 rounding rejection, and the timeout path (tested via OS pipe: write-only channel that never returns a response).
 
 ---
 
@@ -191,7 +191,7 @@ governed-edge-ai/
 ### 1. LinkedIn Pulse Article
 
 **Title:** "When AI Controls Physical Systems: Governance Must Be a Hardware Invariant, Not a Policy Document"
-**Pillar:** B — AI Governance, Regulation & the Infrastructure It Forces
+**Pillar:** B: AI Governance, Regulation & the Infrastructure It Forces
 **Format:** Full C-suite editorial format (7 mandatory sections), ~1,100 words
 **Files:** `s-physical-ai-governance.docx` + `s-physical-ai-governance.pdf`
 **Publish date:** Thursday 7 August 2026 (next Thursday per editorial calendar)

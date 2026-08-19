@@ -24,7 +24,7 @@ import pytest
 _FIRMWARE_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "alvik-firmware")
 sys.path.insert(0, os.path.abspath(_FIRMWARE_DIR))
 
-import ipc_codec as ac  # noqa: E402 — sys.path must be set first
+import ipc_codec as ac  # noqa: E402: sys.path must be set first
 
 from ipc.codec import (  # noqa: E402
     ActionType,

@@ -62,7 +62,7 @@ def test_full_command_lifecycle(tmp_path):
 
         lg.close_session(sid, notes="smoke test complete")
 
-    # Step 5: durability — re-open and verify
+    # Step 5: durability: re-open and verify
     with AuditLogger(tmp_path / "smoke.db") as lg2:
         count = lg2._conn.execute(
             "SELECT COUNT(*) FROM audit_log"
