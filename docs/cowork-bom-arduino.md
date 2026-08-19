@@ -61,7 +61,21 @@ The UNO Q 4GB has **2× ISP at 13 MP / 30 fps**. Without a camera, the perceptio
 - **VENTUNO Q:** check if a power adapter is sold separately
 - **Alvik:** runs on an 18650 Li-ion battery (check if pre-installed and if a charger is needed)
 
-### 4. Optional accessories
+### 4. Arduino GIGA Display Bundle (optional — audit dashboard)
+
+The GIGA R1 WiFi + GIGA Display Shield together provide a **physical audit log display** mounted on the demo rig. The GIGA R1 connects to the VENTUNO Q over Wi-Fi and polls the Flask audit dashboard API; the 3.97" touch display renders live governance events (detection type, confidence, audit_ref, HALT/MOVE decision, ACK/REJECT) without requiring a laptop.
+
+- **GIGA R1 WiFi**: dual-core STM32H747 (Cortex-M7 480 MHz + M4 240 MHz), Wi-Fi + BT, USB-A host
+- **GIGA Display Shield**: 3.97" IPS 480×800 capacitive touch, camera connector (Arducam-compatible), microphone
+
+**Camera connector note**: the display shield's camera connector may accept the same Arducam MIPI modules sold for the UNO Q 4GB ISP. If so, the GIGA becomes a low-cost fallback perception node if the UNO Q camera is unavailable. Confirm compatibility when checking the Arduino store.
+
+**Find on the Arduino store:**
+- Search "GIGA Display Bundle" for the bundled SKU (cheaper than buying separately)
+- Note individual SKUs for GIGA R1 WiFi and GIGA Display Shield if no bundle is listed
+- Confirm whether the GIGA Display Shield camera connector accepts standard MIPI CSI modules
+
+### 5. Other optional accessories
 
 - **MicroSD card**: for persistent audit log storage beyond SQLite on the VENTUNO Q (if a slot is available)
 - **Mounting hardware / enclosure**: to fix the UNO Q 4GB and VENTUNO Q together for stable demos
@@ -72,9 +86,10 @@ The UNO Q 4GB has **2× ISP at 13 MP / 30 fps**. Without a camera, the perceptio
 ## Your Task
 
 1. Go to **https://store.arduino.cc**
-2. For each of the four categories above, find matching products and note name, SKU, price, and stock status
+2. For each of the five categories above, find matching products and note name, SKU, price, and stock status
 3. Pay particular attention to **camera compatibility with the UNO Q 4GB**: this is the most critical unknown
-4. If an item is not available on the Arduino store, note it clearly so I can source it elsewhere
+4. For the GIGA Display Bundle: confirm whether a bundled SKU exists and whether the display shield camera connector accepts standard MIPI CSI modules
+5. If an item is not available on the Arduino store, note it clearly so I can source it elsewhere
 
 ---
 
@@ -89,10 +104,14 @@ Produce a complete **Bill of Materials (BOM)** covering peripherals only:
 | 3 | USB-C cable (VENTUNO Q ↔ Alvik) | ... | ... | 1 | ... | IPC channel to robot | ... |
 | 4 | Power supply: UNO Q 4GB | ... | ... | 1 | ... | Power | ... |
 | 5 | Power supply: VENTUNO Q | ... | ... | 1 | ... | Power | ... |
+| 6 | GIGA R1 WiFi (optional) | ... | ... | 1 | ... | Physical audit dashboard | ... |
+| 7 | GIGA Display Shield (optional) | ... | ... | 1 | ... | 3.97" touch screen for audit log | ... |
 | ... | | | | | | | |
-| | | | **TOTAL** | | **€XX.XX** | | |
+| | | | **TOTAL (required)** | | **€XX.XX** | | |
+| | | | **TOTAL (with optional)** | | **€XX.XX** | | |
 
 **Important notes to include:**
 - If no camera is available on the Arduino store: flag it and suggest the closest third-party alternative (Arducam MIPI, Raspberry Pi Camera Module 3, etc.) with approximate price
 - If the Alvik ships with everything needed (battery, USB cable): note "included" so I don't double-buy
+- For the GIGA Display Bundle: note if a bundled SKU exists (likely cheaper) and confirm MIPI camera connector compatibility
 - Direct product URLs from store.arduino.cc for every item found there
