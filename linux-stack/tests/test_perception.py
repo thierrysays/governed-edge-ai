@@ -1,7 +1,7 @@
 """
 Unit tests for linux-stack/perception/base.py and perception/backends.py.
 
-No camera, no model weights, no hardware — all tests use the stub backends
+No camera, no model weights, no hardware: all tests use the stub backends
 and a dummy frame (None or a small numpy-like object).
 """
 

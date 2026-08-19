@@ -1,6 +1,6 @@
 # IPC Protocol Specification: Linux (NPU) to STM32H5
 
-Version 0.1 — draft, pending pinout confirmation  
+Version 0.1: draft, pending pinout confirmation  
 Status: proposed, not yet implemented
 
 ## Purpose
@@ -62,7 +62,7 @@ A receiver that sees any byte other than 0xA5 at the start of a frame discards b
 
 ## Payload definitions
 
-### COMMAND_REQUEST (0x01) — 20 bytes
+### COMMAND_REQUEST (0x01): 20 bytes
 
 The Linux side must write the audit log entry and obtain a confirmed entry ID before constructing this frame. The `audit_ref` field carries that ID. A command request sent without a valid `audit_ref` is rejected.
 
@@ -75,21 +75,21 @@ The Linux side must write the audit log entry and obtain a confirmed entry ID be
 | 17     | 1      | action_type   | see action type table |
 | 18     | 2      | action_param  | int16: action-specific parameter |
 
-### COMMAND_ACK (0x81) — 9 bytes
+### COMMAND_ACK (0x81): 9 bytes
 
 | Offset | Length | Field     | Notes |
 |--------|--------|-----------|-------|
 | 0      | 8      | audit_ref | uint64: echoed from the request |
 | 8      | 1      | status    | 0x00 = queued, 0x01 = executing |
 
-### COMMAND_REJECT (0x82) — 9 bytes
+### COMMAND_REJECT (0x82): 9 bytes
 
 | Offset | Length | Field     | Notes |
 |--------|--------|-----------|-------|
 | 0      | 8      | audit_ref | uint64: echoed from the request; 0 if frame was malformed |
 | 8      | 1      | reason    | see reject reason table |
 
-### HALT_NOTIFY (0x90) — 9 bytes
+### HALT_NOTIFY (0x90): 9 bytes
 
 Sent by the STM32H5 within 1 ms of any halt-triggering event, without waiting for a request.
 
@@ -98,19 +98,19 @@ Sent by the STM32H5 within 1 ms of any halt-triggering event, without waiting fo
 | 0      | 8      | timestamp_us | uint64: microseconds since session start |
 | 8      | 1      | trigger      | see halt trigger table |
 
-### HEARTBEAT (0x10) — 0 bytes payload
+### HEARTBEAT (0x10): 0 bytes payload
 
 No payload. The Linux side sends this every 500 ms.
 
-### HEARTBEAT_ACK (0x11) — 0 bytes payload
+### HEARTBEAT_ACK (0x11): 0 bytes payload
 
 No payload. Sent by the STM32H5 in response to each HEARTBEAT.
 
-### STATUS_QUERY (0x20) — 0 bytes payload
+### STATUS_QUERY (0x20): 0 bytes payload
 
 No payload.
 
-### STATUS_RESPONSE (0x21) — 14 bytes
+### STATUS_RESPONSE (0x21): 14 bytes
 
 | Offset | Length | Field              | Notes |
 |--------|--------|--------------------|-------|

@@ -109,7 +109,7 @@ class TestConfidenceGate:
     def test_at_threshold_logged_and_sent(self, gov, audit_logger):
         # 0.70 is the threshold; values exactly at it should be accepted by the
         # Linux gate. Float32 encoding of 0.70 is 0.6999…, which the STM32H5 mock
-        # rejects, so stm32_ack=False here — but command_sent must be True.
+        # rejects, so stm32_ack=False here: but command_sent must be True.
         gov.process_frame([_det(confidence=0.70)])
         row = _log_row(audit_logger)
         assert row[2] == 1    # command_sent = True (Linux gate passed)
@@ -127,7 +127,7 @@ class TestConfidenceGate:
     def test_confidence_boundary_0_69_suppressed(self, gov, audit_logger):
         gov.process_frame([_det(confidence=0.69)])
         row = _log_row(audit_logger)
-        assert row[2] == 0    # below threshold — not sent
+        assert row[2] == 0    # below threshold: not sent
 
     def test_confidence_1_0_accepted(self, gov, audit_logger):
         gov.process_frame([_det(confidence=0.9999)])  # clamped by DetectionResult
@@ -337,7 +337,7 @@ class TestRejectPaths:
 
     @pytest.mark.regression
     def test_command_sent_false_never_updates_stm32_ack(self, gov, audit_logger):
-        # Suppressed detections must not update stm32_ack — they were never sent.
+        # Suppressed detections must not update stm32_ack: they were never sent.
         gov.process_frame([_det(confidence=0.30)])
         row = _log_row(audit_logger)
         assert row[3] is None  # stm32_ack stays NULL

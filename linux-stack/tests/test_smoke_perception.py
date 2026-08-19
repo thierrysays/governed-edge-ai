@@ -2,7 +2,7 @@
 Smoke tests for the perception pipeline interface.
 
 Each test exercises the full path from PerceptionPipeline.run() through
-DetectionResult construction — the same path the governance layer will walk
+DetectionResult construction: the same path the governance layer will walk
 on every captured frame.
 """
 
@@ -53,7 +53,7 @@ def test_null_pipeline_suppresses_commands():
 @pytest.mark.smoke
 def test_detection_result_is_immutable():
     """
-    DetectionResult is frozen — the governance layer cannot accidentally
+    DetectionResult is frozen: the governance layer cannot accidentally
     mutate a detection after it is produced by the backend.
     """
     r = DetectionResult(detection_type="object", label="person", confidence=0.91)

@@ -97,7 +97,7 @@ def test_log_before_act_protocol_sequence():
 
 @pytest.mark.smoke
 def test_watchdog_halt_flow():
-    """STM32H5 sends HALT_NOTIFY without any request — Linux side must handle it."""
+    """STM32H5 sends HALT_NOTIFY without any request: Linux side must handle it."""
     halt = HaltNotify(timestamp_us=999_999, trigger=HaltTrigger.WATCHDOG)
     frame = encode(halt)
 

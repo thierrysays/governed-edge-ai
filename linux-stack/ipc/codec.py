@@ -110,8 +110,8 @@ class SystemState(IntEnum):
 
 @dataclass(frozen=True)
 class CommandRequest:
-    audit_ref: int       # uint64 — must be non-zero (log-before-act)
-    timestamp_us: int    # uint32 — microseconds since session start
+    audit_ref: int       # uint64: must be non-zero (log-before-act)
+    timestamp_us: int    # uint32: microseconds since session start
     actor: Actor
     confidence: float    # float32 IEEE 754
     action_type: ActionType

@@ -3,7 +3,7 @@ Unit tests for linux-stack/ipc/mock_peer.py.
 
 Tests use a real pty pair: the slave end is opened by the test (simulating
 the Linux IPC client), frames are written in, and responses are read back
-with a select-based timeout. No mocking of the pty layer — this exercises
+with a select-based timeout. No mocking of the pty layer: this exercises
 the actual read/write path the real IPC client will use.
 """
 
@@ -37,7 +37,7 @@ from ipc.mock_peer import MockSTM32H5
 # Test helpers
 # ---------------------------------------------------------------------------
 
-RESPONSE_TIMEOUT = 0.4   # seconds — generous for CI latency
+RESPONSE_TIMEOUT = 0.4   # seconds: generous for CI latency
 
 
 def _read_one(fd: int, timeout: float = RESPONSE_TIMEOUT) -> object:
@@ -265,7 +265,7 @@ class TestKillSwitch:
     def test_second_trigger_does_not_send_second_notify(self, peer, client_fd):
         peer.trigger_kill_switch()
         _read_one(client_fd)  # first HALT_NOTIFY
-        peer.trigger_kill_switch()  # already halted — no second notify
+        peer.trigger_kill_switch()  # already halted: no second notify
         with pytest.raises(TimeoutError):
             _read_one(client_fd, timeout=0.15)
 
@@ -303,7 +303,7 @@ class TestWatchdog:
         assert peer.state == SystemState.HALTED
 
     def test_heartbeat_resets_watchdog(self, peer, client_fd):
-        # Send heartbeats faster than the 200ms watchdog — no HALT_NOTIFY should arrive
+        # Send heartbeats faster than the 200ms watchdog: no HALT_NOTIFY should arrive
         for _ in range(5):
             _send(client_fd, Heartbeat())
             _read_one(client_fd)  # HEARTBEAT_ACK

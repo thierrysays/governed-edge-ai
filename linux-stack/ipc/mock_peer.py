@@ -18,7 +18,7 @@ State machine:
     BUSY   → ARMED (on command completion, simulated instantly)
     ARMED  → HALTED (kill switch GPIO or watchdog expiry)
     HALTED → ARMED (not automatic; requires kill switch release +
-                    STATUS_QUERY — resume sequence TBD per spec)
+                    STATUS_QUERY: resume sequence TBD per spec)
     any    → FAULT (explicit inject_fault() call)
 
 Governance invariants enforced:
@@ -74,7 +74,7 @@ class MockSTM32H5:
         self._threshold = confidence_threshold
         self._watchdog_ms = watchdog_ms
 
-        # pty pair — binary, raw (no line-discipline mangling)
+        # pty pair: binary, raw (no line-discipline mangling)
         self._master_fd, self._slave_fd = os.openpty()
         tty.setraw(self._slave_fd)  # prevent 0x0A → 0x0D 0x0A translation
         self._slave_path: str = os.ttyname(self._slave_fd)
@@ -102,7 +102,7 @@ class MockSTM32H5:
 
     @property
     def device(self) -> str:
-        """Slave pty path — open this as a serial port from the client."""
+        """Slave pty path: open this as a serial port from the client."""
         return self._slave_path
 
     @property

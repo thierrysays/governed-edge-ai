@@ -6,13 +6,13 @@ PerceptionPipeline and return DetectionResult values that the governance
 layer translates into IPC CommandRequest frames.
 
 Design constraints:
-- DetectionResult is a frozen dataclass — the governance layer must not
+- DetectionResult is a frozen dataclass: the governance layer must not
   mutate a detection after it is produced.
 - confidence is float in [0.0, 1.0]; the IPC layer encodes it as float32.
   Values above 0.9999 are clamped to prevent float32 overflow artefacts.
 - PerceptionPipeline is an ABC; concrete backends are registered via
   subclassing, not monkey-patching.
-- run() accepts raw BGR uint8 frames (numpy ndarray, H×W×3) — the format
+- run() accepts raw BGR uint8 frames (numpy ndarray, H×W×3): the format
   produced by OpenCV and most V4L2/MIPI-CSI capture pipelines.
 """
 
@@ -54,7 +54,7 @@ class DetectionResult:
         None for gesture/pose detections that lack a bounding box.
     backend:
         Name of the backend that produced this result (e.g. "yolox", "mediapipe").
-        Populated by PerceptionPipeline.run() — not set by the caller.
+        Populated by PerceptionPipeline.run(): not set by the caller.
     """
 
     detection_type: DetectionType
@@ -67,7 +67,7 @@ class DetectionResult:
     def __post_init__(self) -> None:
         if not 0.0 <= self.confidence <= 1.0:
             raise ValueError(f"confidence must be in [0.0, 1.0], got {self.confidence!r}")
-        # Clamp silently — float32 rounding is a transport concern, not a model concern.
+        # Clamp silently: float32 rounding is a transport concern, not a model concern.
         object.__setattr__(self, "confidence", min(self.confidence, _CONFIDENCE_MAX))
 
     def passes_threshold(self, threshold: float = 0.70) -> bool:
@@ -94,7 +94,7 @@ class PerceptionPipeline(ABC):
 
         Returns a list of DetectionResult objects, ordered by descending
         confidence. Returns an empty list if no detections pass the backend's
-        internal filtering. Must not raise — return [] on inference error.
+        internal filtering. Must not raise: return [] on inference error.
         """
 
     def warm_up(self, frame: np.ndarray) -> None:

@@ -130,7 +130,7 @@ class GovernanceFilter:
         if not detections:
             return
 
-        # Highest-confidence detection first — it is the only candidate for
+        # Highest-confidence detection first: it is the only candidate for
         # command dispatch; all others are logged as suppressed.
         by_confidence = sorted(detections, key=lambda d: d.confidence, reverse=True)
 
