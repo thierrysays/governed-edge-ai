@@ -170,9 +170,11 @@ That last point is the one most likely to be softened by accident. The right reg
 
 ## Repository metadata
 
-**Description** (324 characters, GitHub allows 350):
+**Description** (300 characters, GitHub allows 350):
 
-> Governance controls enforced in circuitry, not policy, across five Arduino boards. No actuation without a prior audit entry, no audit entry unwitnessed by a board the host does not control, and a bistable relay in the motor supply that no software can close. 733 tests, 100% coverage, full stack runs in CI with no hardware.
+> A governance control that exists only in a document is not a control. Five Arduino boards where log-before-act, witness-before-act and human override are enforced in protocol and circuitry: no actuation without a prior audit entry, and a bistable relay in the motor supply that no software can close.
+
+Deliberately carries no test count. The previous description quoted one and needed correcting three times in a single day; a description that goes stale on every commit is badly designed. The figures live in *Numbers* above, which is the place to look them up.
 
 **Topics:**
 
