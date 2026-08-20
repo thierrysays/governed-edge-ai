@@ -184,11 +184,13 @@ All tests run without physical hardware. CI reproduces the full stack: synthetic
 
 Two suites are worth calling out.
 
-**Adversarial security tests** (`test_security_oversight.py`) attack the design from four positions: a compromised governance host, an attacker on the oversight cable, a compromised host with database write access, and hostile input on either link. They assert what holds *and* what does not. A forged `OVERRIDE_CLEAR` really does release the soft veto, and the test says so; the relay contact is unaffected, which is why there are two paths. A control whose limits are undocumented is a control nobody can rely on.
+**Adversarial security tests** (`test_security_oversight.py`) attack the design from five positions: a compromised governance host, an attacker on the oversight cable, a compromised host with database write access, hostile input on either link, and the latch relay itself. They assert what holds *and* what does not. A forged `OVERRIDE_CLEAR` really does release the soft veto, and the test says so; the relay contact is unaffected, which is why there are two paths. A control whose limits are undocumented is a control nobody can rely on.
 
 Three real defects were found this way rather than by review. A missing frame-length guard let one hostile header wedge a link permanently. A failed transmit left the audit log claiming a command had been sent. And the original GPIO kill line **failed open on power loss**, which no test could have caught because the mocks modelled a state machine and had no power to lose. All three are fixed; the third caused the redesign in step 11 and its regression test now models a contact rather than a boolean.
 
 **Firmware parity tests** (`test_r4_firmware_parity.py`) compile the R4's C++ state machine for the host with `-Wall -Wextra -Werror` and check it against the Python reference model: byte-identical frames, identical verdict sequences, identical state transitions, identical constants. Two implementations of one state machine drift unless something checks them.
+
+That check has a known blind spot, found while auditing the documentation rather than by the harness itself: it compares the messages both sides implement, so it says nothing about a message the firmware never got. `LATCH_REQUEST` and `LATCH_REPORT` are in the model and absent from the C++ port, and the suite is green regardless. `docs/architecture.md` section 12 records it.
 
 What is not tested: the Arduino hardware layer itself. Pin timing, the LED matrix driver, Wi-Fi, serial throughput at 921600 baud and the electrical behaviour of the relay contact and its sense line all need the physical rig. `docs/architecture.md` section 12 lists them explicitly.
 

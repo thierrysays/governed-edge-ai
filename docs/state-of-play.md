@@ -131,6 +131,8 @@ These belong in any serious write-up. Omitting them would contradict the argumen
 
 **The 0.70 confidence threshold is an engineering judgment.** No published standard maps a confidence score to an injury probability for human-robot collaboration.
 
+**Two protocol messages exist in the specification and not in the firmware.** `LATCH_REQUEST` and `LATCH_REPORT` are implemented and tested in the Python reference model; the C++ port carries neither. On a real board the arbiter would still open the contact, read it back and latch an override on a disagreement, and would not be able to report the contact's position over the link. The parity harness missed it because it checks the messages that exist rather than the ones that should.
+
 **Nothing has been powered on.** No board has run this firmware, no relay has been wired, no camera has been mounted. Pin timing, the LED matrix, serial throughput, contact bounce, coil pulse adequacy and both sense-channel thresholds are all untested. Every timing figure in the protocol specification is a design target, not a measurement.
 
 That last point is the one most likely to be softened by accident. The right register is that the software is complete and tested and the hardware is a design awaiting a bench.
