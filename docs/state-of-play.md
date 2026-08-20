@@ -95,9 +95,21 @@ Older material states these. All are now false.
 | A hardware kill switch on the robot | A bistable relay contact in the motor supply, held by a board that is not on the command chain |
 | MIT licence | Apache 2.0 |
 | Camera unsourced | Arducam IMX219, two of them |
-| Reproducible for under EUR 200 | **No figure.** That was true of the three-board rig. Five boards plus a relay, optos and two cameras is well past it. The honest claim is commodity parts and no bespoke silicon. |
+| Reproducible for under EUR 200 | **Retired, with no replacement figure.** See below. |
 
-The cost figure is the one to be most careful with. Repeating it would put a false statement on a page whose argument is about not overclaiming.
+### The cost claim, specifically
+
+**It is withdrawn, and nothing replaces it.**
+
+"Under EUR 200" was true of the three-board rig. The build is now five boards plus a latch relay, two opto-isolators, three Modulino modules, two IMX219 cameras, longer CSI ribbons, Qwiic cables and storage for the audit journal. It is substantially more expensive than that, confirmed by the author, and no new figure is offered here because none has been totalled against real invoices.
+
+Do not estimate one. A page whose entire argument is about not overclaiming is the worst possible place to carry a made-up number, and a low price is exactly the kind of claim a reader checks.
+
+What can be said instead, and is true: **commodity parts, no bespoke silicon, nothing that needs a vendor relationship to buy.** That was always the interesting claim. The price was a proxy for it.
+
+If a figure is genuinely needed one day, it has to come from a totalled bill of materials, and `docs/cowork-bom-arduino.md` is the list to price. Until then there is no number to quote.
+
+**Check the website.** The claim is most likely still live at `glossolalie.pro`, where the project page carried it in two i18n keys, `edge.summary.cost` and `edge.summary.costval`, rendered as a stat tile. Removing the values is not enough: delete both keys and the tile they populate, or the layout is left with an empty box.
 
 ---
 
