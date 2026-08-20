@@ -59,8 +59,8 @@ Perception    -->  Governance         -->   Robot body
 ```
 
 **The fifth board is the Nesso N1**, the out-of-band operator console. It is in
-`docs/architecture.md` and in the bill of materials because the design depends
-on it, and it is build step 13, which is not written. Nothing in this guide
+`docs/architecture.md` and in Part 1 below because the design depends on it,
+and it is build step 13, which is not written. Nothing in this guide
 needs it. Buy it when the step lands, not before.
 
 ### Why a relay and not a wire

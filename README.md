@@ -137,8 +137,7 @@ governed-edge-ai/
 │   ├── ipc-protocol.md            # IPC binary protocol reference, both links
 │   ├── governance-mapping.md      # Framework control mapping
 │   ├── state-of-play.md           # Current facts, for anyone writing about the project
-│   ├── release-notes.md           # Release bodies for v1.0.0, v2.0.0 and v3.0.0
-│   └── cowork-bom-arduino.md      # Peripherals BOM (relay, modules, cameras, cables, power)
+│   └── release-notes.md           # Release bodies for v1.0.0, v2.0.0 and v3.0.0
 ├── alvik-firmware/
 │   ├── ipc_codec.py               # MicroPython IPC codec (CPython-testable)
 │   ├── motor_map.py               # IPC action code to motor API mapping

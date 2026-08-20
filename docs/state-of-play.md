@@ -107,7 +107,7 @@ Do not estimate one. A page whose entire argument is about not overclaiming is t
 
 What can be said instead, and is true: **commodity parts, no bespoke silicon, nothing that needs a vendor relationship to buy.** That was always the interesting claim. The price was a proxy for it.
 
-If a figure is genuinely needed one day, it has to come from a totalled bill of materials, and `docs/cowork-bom-arduino.md` is the list to price. Until then there is no number to quote.
+If a figure is genuinely needed one day, it has to come from a parts list totalled against real invoices. `docs/deployment-guide.md` Part 1 has the list, boards and everything else, with quantities and no prices. Pricing it is the work; inferring a number from the board count is the guess this section exists to prevent.
 
 **Check the website.** The claim is most likely still live at `glossolalie.pro`, where the project page carried it in two i18n keys, `edge.summary.cost` and `edge.summary.costval`, rendered as a stat tile. Removing the values is not enough: delete both keys and the tile they populate, or the layout is left with an empty box.
 

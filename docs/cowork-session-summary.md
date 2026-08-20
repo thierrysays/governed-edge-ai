@@ -381,7 +381,6 @@ governed-edge-ai/
 │   ├── governance-mapping.md      # Framework control mapping
 │   ├── deployment-guide.md        # Step-by-step build from bare metal, for a first-time reader
 │   ├── architecture-reconciliation.md  # Published design vs codebase: deltas and rationale
-│   ├── cowork-bom-arduino.md      # Peripherals BOM brief (relay, modules, cameras, cables, power)
 │   ├── state-of-play.md           # Current facts, for anyone writing about the project
 │   ├── release-notes.md           # Release bodies for v1.0.0, v2.0.0 and v3.0.0
 │   └── cowork-session-summary.md  # This document
