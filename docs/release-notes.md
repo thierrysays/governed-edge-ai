@@ -173,6 +173,10 @@ told to be or cannot be seen.
 
 Additive on the wire. The thirteen existing message types are unchanged.
 
+Both are implemented on **both** sides: the Python model and the C++ firmware.
+They were briefly model-only, which is covered under *Two defects found after
+the first cut* below.
+
 ### Breaking changes
 
 **Wiring.** The jumper from the oversight node's D3 into the Alvik's D4 must be
@@ -198,15 +202,51 @@ system could claim an isolation it had not seen. `SupervisorLink` gains
 
 No schema change. A v2.0.0 audit database is read without modification.
 
+### Two defects found after the first cut, and one gap
+
+This release was assembled, audited, and then corrected. All three findings are
+in it.
+
+**The firmware never got the two new message types.** They were implemented and
+tested in the Python model, which is the specification, and absent from the C++
+port, so the arbiter could neither report the contact's position nor accept a
+request to move it. The parity harness stayed green because it compared the
+messages both sides implemented rather than the ones the specification lists.
+Both types are now in the firmware, and the harness enumerates the model's
+oversight types and fails on any the port lacks.
+
+**A failed motor call was acknowledged as a success.** The Alvik caught any
+exception from the motor driver and replied `CommandAck` anyway, so the audit
+journal recorded `stm32_ack = 1`, which means accepted *and executed*, for
+motion that never happened. It answers `SYSTEM_FAULT` now. It survived because
+`alvik-firmware/main.py` had no tests at all: an unconditional Arduino import
+made it unimportable under CPython, leaving the four governance gates among the
+least tested code here. That import is optional now and the file has thirteen
+tests.
+
+**The board-to-board TCP listener had no length cap.** It binds `0.0.0.0:9100`
+on the node holding the audit journal and read a four-byte length prefix from
+an unauthenticated peer, so a peer sending `0xFFFFFFFF` made it accumulate four
+gibibytes, and one malformed message ended its accept loop. Both are fixed and
+both have tests. This was the third instance of the same bug class here, after
+`MAX_PAYLOAD` in the IPC codec and `IPC_MAX_FRAME` in the C++ parser.
+
 ### QA
 
-703 tests across two modules, 100% line coverage on both, gate at 98. ruff,
-mypy strict, bandit and pip-audit clean.
+733 tests across two modules, 100% line coverage on both, gate at 98. ruff,
+mypy strict, bandit and pip-audit clean, with bandit run at every severity
+rather than medium and above.
 
 The parity harness now compiles `latch.cpp` alongside the state machine with
 `-Wall -Wextra -Werror`. The sense glue is `digitalRead`, which the harness
 cannot drive, so it is checked as text instead: both pins present, both pulled
 up, and `LATCH_UNKNOWN` still reachable from the glue.
+
+The audit also turned up nothing in several places worth naming, so the next
+pass knows what has been looked at: no secrets in the tree, no `eval`, `exec`,
+`pickle`, `os.system`, `shell=True` or `yaml.load`, no SQL built by
+interpolation, no known CVEs, and the new C++ encoder and decoder both bounded
+well inside `IPC_MAX_FRAME`.
 
 ### Not tested
 
