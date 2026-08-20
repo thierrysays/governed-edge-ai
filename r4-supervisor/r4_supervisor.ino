@@ -192,6 +192,23 @@ static void send_attest_ack(uint64_t audit_ref, uint8_t verdict) {
   Serial.flush();
 }
 
+/* All three positions, not just the observation. A receiver that saw only
+ * where the contact is could not tell one resting where it was asked to rest
+ * from one that never moved, which is what the read-back exists to detect.
+ * Polls on demand when nothing has been read yet, rather than reporting
+ * nothing at all. */
+static void send_latch_report(uint32_t now_ms) {
+  if (!latch.has_reading) {
+    latch_poll(&latch, now_ms);
+  }
+  uint8_t frame[IPC_MAX_FRAME];
+  const size_t n = ipc_encode_latch_report(
+      frame, (uint8_t)latch.last.commanded, (uint8_t)latch.last.reported,
+      (uint8_t)latch.last.observed, latch.transitions, latch.mismatches);
+  Serial.write(frame, n);
+  Serial.flush();
+}
+
 /* ------------------------------------------------------------------ */
 /* Latch relay                                                         */
 /* ------------------------------------------------------------------ */
@@ -276,10 +293,36 @@ static void drive_latch(uint32_t now_ms) {
   if (latch_poll_if_due(&latch, now_ms, &reading)
       && latch.commanded != LATCH_UNKNOWN
       && !latch_reading_agrees(&reading)) {
+    send_latch_report(now_ms);
     if (supervisor_assert_override(&state, OVR_LATCH_MISMATCH)) {
+      /* Open the contact before announcing it. If the announcement is what
+       * fails, the motors are already isolated. */
+      latch_enforce_halt(&latch, now_ms);
       send_override_assert(OVR_LATCH_MISMATCH);
+      send_latch_report(now_ms);
     }
   }
+}
+
+/*
+ * A request from the governance tier. This board decides, and the asymmetry
+ * is the reason the relay hangs off this bus and not the deciding host's.
+ *
+ * OPEN is always honoured: more ways to stop are safe. CLOSE is refused
+ * outright while an override stands, so nothing on the wire can talk the
+ * override down. Either way a report goes back, because a request whose
+ * outcome is never reported is the assertion this whole path replaces.
+ */
+static void on_latch_request(const LatchRequest *req, uint32_t now_ms) {
+  const bool refused = state.mode == SUP_OVERRIDE && req->desired == LATCH_CLOSED;
+  if (!refused) {
+    if (req->desired == LATCH_OPEN) {
+      latch_enforce_halt(&latch, now_ms);
+    } else if (req->desired == LATCH_CLOSED) {
+      latch_permit(&latch, now_ms);
+    }
+  }
+  send_latch_report(now_ms);
 }
 
 /* ------------------------------------------------------------------ */
@@ -406,10 +449,22 @@ void loop() {
   /* Inbound frames */
   SupervisorHeartbeat hb;
   AttestDigest digest;
+  LatchRequest latch_req;
   while (Serial.available() > 0) {
-    const uint8_t hit = ipc_parser_feed(&parser, (uint8_t)Serial.read(), &hb, &digest);
+    const uint8_t hit = ipc_parser_feed(
+        &parser, (uint8_t)Serial.read(), &hb, &digest, &latch_req);
     if (hit == MSG_SUPERVISOR_HEARTBEAT) {
+      const bool first = !state.heartbeat_seen;
       supervisor_on_heartbeat(&state, &hb, now_ms);
+      /* The contact is released on first contact with a live governance tier
+       * and the release is reported, not assumed. An override already latched
+       * keeps it open: drive_latch below is what actually decides. */
+      if (first && state.mode != SUP_OVERRIDE) {
+        drive_latch(now_ms);
+        send_latch_report(now_ms);
+      }
+    } else if (hit == MSG_LATCH_REQUEST) {
+      on_latch_request(&latch_req, now_ms);
     } else if (hit == MSG_ATTEST_DIGEST) {
       const uint8_t verdict = supervisor_on_digest(&state, &digest);
       send_attest_ack(digest.audit_ref, verdict);

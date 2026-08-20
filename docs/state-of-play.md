@@ -59,7 +59,7 @@ On the arbiter's own I2C bus, deliberately not the deciding host's: a Modulino L
 | Current release | `v3.0.0`, "the latch relay" |
 | Build steps shipped | 11 |
 | Build steps designed but not built | 6 (steps 12 to 17) |
-| Tests | 703 across two modules |
+| Tests | 733 across two modules |
 | Line coverage | 100% on both, gate set at 98% |
 | Static analysis | ruff, mypy strict, bandit, pip-audit, all clean |
 | Hardware needed to run the suite | None |
@@ -95,13 +95,29 @@ Older material states these. All are now false.
 |---|---|
 | Three boards | Five |
 | Four boards | Five |
-| 241 tests, 95.76% coverage | 703 tests, 100% line coverage |
-| 611 tests | 703. The 611 figure is still usable when the point is that those tests missed the power-loss fault. |
+| 241 tests, 95.76% coverage | 733 tests, 100% line coverage |
+| 611 or 703 tests | 733. The 611 figure is still usable when the point is that those tests missed the power-loss fault. |
 | Eight build steps | Eleven shipped |
 | A hardware kill switch on the robot | A bistable relay contact in the motor supply, held by a board that is not on the command chain |
 | MIT licence | Apache 2.0 |
 | Camera unsourced | Arducam IMX219, two of them |
 | Reproducible for under EUR 200 | **Retired, with no replacement figure.** See below. |
+
+### What the security audit found
+
+Three defects, none of them in the parts of the system that get written about. Worth knowing, because they are the answer to "what did testing actually catch".
+
+**A motor call that failed was acknowledged as a success.** The governed board caught any exception from the motor driver and replied `CommandAck` anyway, so the audit journal recorded `stm32_ack = 1`, which means accepted *and executed*, for motion that never happened. The same shape as a transmit-layer defect fixed earlier, one board further out, and the exact error the project exists to refuse: the component asked to act reporting that it acted. It now answers `SYSTEM_FAULT`.
+
+It survived because `alvik-firmware/main.py` had **no tests at all**: an unconditional import of the Arduino library made it unimportable under CPython. That import is now optional and the four governance gates have thirteen tests.
+
+**The board-to-board TCP listener had no length cap.** It binds `0.0.0.0:9100` on the node holding the audit journal and read a four-byte length prefix from an unauthenticated peer, so a peer sending `0xFFFFFFFF` made it accumulate four gibibytes. A malformed message also escaped the accept loop and ended the listener. Both are fixed and both have tests. This is the third instance of the same bug class in this codebase, after the IPC codec's `MAX_PAYLOAD` and the C++ parser's frame check.
+
+**Two protocol messages were in the specification and not in the port.** Closed, along with the harness gap that hid it. See *Where the detail lives*.
+
+What the audit did not find: no secrets in the tree, no dangerous calls (`eval`, `exec`, `pickle`, `shell=True`, `yaml.load`), no SQL built by interpolation, and no findings from bandit at any severity or from pip-audit.
+
+---
 
 ### The cost claim, specifically
 
@@ -131,8 +147,6 @@ These belong in any serious write-up. Omitting them would contradict the argumen
 
 **The 0.70 confidence threshold is an engineering judgment.** No published standard maps a confidence score to an injury probability for human-robot collaboration.
 
-**Two protocol messages exist in the specification and not in the firmware.** `LATCH_REQUEST` and `LATCH_REPORT` are implemented and tested in the Python reference model; the C++ port carries neither. On a real board the arbiter would still open the contact, read it back and latch an override on a disagreement, and would not be able to report the contact's position over the link. The parity harness missed it because it checks the messages that exist rather than the ones that should.
-
 **Nothing has been powered on.** No board has run this firmware, no relay has been wired, no camera has been mounted. Pin timing, the LED matrix, serial throughput, contact bounce, coil pulse adequacy and both sense-channel thresholds are all untested. Every timing figure in the protocol specification is a design target, not a measurement.
 
 That last point is the one most likely to be softened by accident. The right register is that the software is complete and tested and the hardware is a design awaiting a bench.
@@ -158,7 +172,7 @@ That last point is the one most likely to be softened by accident. The right reg
 
 **Description** (324 characters, GitHub allows 350):
 
-> Governance controls enforced in circuitry, not policy, across five Arduino boards. No actuation without a prior audit entry, no audit entry unwitnessed by a board the host does not control, and a bistable relay in the motor supply that no software can close. 703 tests, 100% coverage, full stack runs in CI with no hardware.
+> Governance controls enforced in circuitry, not policy, across five Arduino boards. No actuation without a prior audit entry, no audit entry unwitnessed by a board the host does not control, and a bistable relay in the motor supply that no software can close. 733 tests, 100% coverage, full stack runs in CI with no hardware.
 
 **Topics:**
 

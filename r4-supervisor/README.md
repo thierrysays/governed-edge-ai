@@ -88,20 +88,23 @@ edge: a contact that silently failed to move raises no edge either.
 Any disagreement latches an `OVERRIDE_ASSERT(LATCH_MISMATCH)` and shows the
 LATCH glyph.
 
-**One gap, stated rather than left to be discovered.** The Python reference
-model also exchanges `LATCH_REQUEST` (0x32) and `LATCH_REPORT` (0xA3), so in
-the model both sides see every reading and the governance tier can ask for the
-contact to be opened. **This firmware implements neither.** Its codec carries
-the five original oversight types and no more, so on a real board the arbiter
-announces a latch fault as an override and the governance tier learns the
-position only by inference.
+**Both sides act on the same reading.** The arbiter sends `LATCH_REPORT`
+(0xA3) after every command, every request and every mismatch, carrying all
+three positions and the two counters. The governance tier raises its own
+override on a disagreement rather than relying on this board having noticed.
 
-That is a port lagging its specification, which is exactly what the parity
-harness exists to prevent, and the harness does not catch it because it checks
-the messages that exist rather than the ones that should. Closing it means two
-message types in `ipc_frame.h/.cpp`, a report emitted from the sketch's poll,
-a decoder for the request, and parity tests for both. Until then, treat any
-document describing the latch protocol as describing the model.
+**The governance tier may ask, and this board decides.** `LATCH_REQUEST`
+(0x32) asking for OPEN is always honoured, because more ways to stop are safe.
+Asking for CLOSED is refused outright while an override stands. Either way a
+report goes back: a request whose outcome is never reported is the assertion
+this path exists to replace.
+
+Both message types were absent from this firmware between step 11 and the
+audit that found them, which is worth remembering rather than tidying away.
+The relay worked; the reporting did not exist; and the parity harness stayed
+green because it compared the messages both sides implemented rather than the
+ones the specification lists. It now enumerates the model's oversight types
+and fails on any the firmware lacks.
 
 ## Wiring
 
@@ -126,7 +129,7 @@ ground to get wrong and no pin on the governed board to depend on.
 | `r4_supervisor.ino` | Sketch: pins, LED matrix glyphs, serial I/O, relay and sense glue, optional Wi-Fi console |
 | `latch.h` / `.cpp` | Latch relay driver. Pure logic; hardware injected as four function pointers. |
 | `supervisor_state.h` / `.cpp` | The state machine. No Arduino headers: pure logic, host-compilable. |
-| `ipc_frame.h` / `.cpp` | IPC codec, oversight subset. CRC-16/CCITT, five message types. |
+| `ipc_frame.h` / `.cpp` | IPC codec, oversight subset. CRC-16/CCITT, seven message types. |
 | `test/parity_harness.cpp` | Host driver that exposes the three logic files over a line protocol |
 
 The sketch deliberately implements no decoder for `COMMAND_REQUEST`. This board

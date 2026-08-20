@@ -1,7 +1,7 @@
 # governed-edge-ai: Architecture & Functional Specification
 
 **Version:** 3.0, 2026-08-19
-**Status:** Steps 1 to 11 implemented and tested. Five boards, two links, 703 tests, 100% line coverage on both modules.
+**Status:** Steps 1 to 11 implemented and tested. Five boards, two links, 733 tests, 100% line coverage on both modules.
 
 **What changed in 3.0.** Physical enforcement moved from a GPIO line into the Alvik's kill-switch pin to a bistable latch relay in the motor supply, owned by the oversight node. The reconciliation in `docs/architecture-reconciliation.md` explains why: the line failed open on power loss, and it worked only because the governed board chose to read the pin, which made the robot a participant in its own restraint. The Arduino Nesso N1 joins as the out-of-band operator console, and the target board count is five.
 
@@ -1083,7 +1083,7 @@ Recovering `digests` from a running board currently means the Wi-Fi console, whi
 ### Overview
 
 ```
-703 tests total · 100% line coverage on both modules · hardware-free
+733 tests total · 100% line coverage on both modules · hardware-free
 ```
 
 | Module | Tests | Coverage |
@@ -1103,11 +1103,12 @@ The coverage gate is `--cov-fail-under=98` on both modules. Entry-point guards (
 | `test_mock_peer.py` | 35 | unit | State machine, local test input, confidence gate (float32), watchdog, reject reasons |
 | `test_perception.py` | 44 | unit | DetectionResult validation, threshold, stub backends, NullPipeline |
 | `test_capture.py` | 12 | unit | V4L2, synthetic and file frame sources |
-| `test_network.py` | 9 | unit | Length-prefixed JSON transport, both ends |
+| `test_network.py` | 14 | unit, security | Length-prefixed JSON transport, both ends, and hostile peers: oversized length prefixes, undecodable JSON, malformed fields |
 | `test_governance.py` | 36 | unit | Empty frame, confidence gate, command mapping, multi-detection frame, log-before-act integrity, reject paths, timeout |
 | `test_uno_q_service.py` | 11 | unit | Multi-backend construction, stub fallback, camera loop |
 | `test_ventuno_q_service.py` | 6 | integration | TCP receive, filter, dispatch, mock mode |
 | `test_alvik_ipc_codec.py` | 19 | unit | The MicroPython codec subset, under CPython |
+| `test_alvik_firmware.py` | 13 | unit, regression | The four governance gates on the governed board, and the failed-motor-call path that used to be acknowledged as a success |
 | `test_codec_oversight.py` | 35 | unit, regression | The oversight message types, wire sizes, CRC, length guards, the oversized-header regression |
 | `test_attestation.py` | 33 | unit | Canonical rendering, chain mechanics, gap detection, tamper detection against a real database |
 | `test_mock_supervisor.py` | 36 | unit | The R4 reference model: latch, watchdog, digest verdicts, annunciator, retained ring |
@@ -1117,21 +1118,21 @@ The coverage gate is `--cov-fail-under=98` on both modules. Entry-point guards (
 | `test_oversight_governance.py` | 19 | integration | Invariants 7 and 8 end to end, against real ptys and a real database |
 | `test_oversight_faults.py` | 22 | unit | Pulled cables, dead descriptors, chain faults, resynchronisation |
 | `test_security_oversight.py` | 27 | security | Adversarial: five threat positions, see below |
-| `test_r4_firmware_parity.py` | 59 | integration | The compiled C++ firmware against the Python reference model, plus text guards on the sketch glue the harness cannot drive |
+| `test_r4_firmware_parity.py` | 71 | integration | The compiled C++ firmware against the Python reference model, plus text guards on the sketch glue the harness cannot drive |
 | `test_coverage_completion.py` | 27 | unit | Error and hardware-only branches the rest of the suite leaves untouched |
 | `test_smoke_governance.py` | 7 | smoke | End-to-end sanity: import, accept flow, null pipeline, suppression, kill switch, multi-backend, log-before-act |
 | `test_smoke_ipc.py` | 5 | smoke | IPC codec smoke: encode/decode, frame corruption detection |
 | `test_smoke_mock.py` | 5 | smoke | Mock peer smoke: connect, send, receive ACK |
 | `test_smoke_perception.py` | 5 | smoke | Perception smoke: stub backends produce expected labels |
 | `test_smoke_oversight.py` | 8 | smoke | The running path end to end: accept, veto, reconcile, tamper, fail closed |
-| **linux-stack subtotal** | **604** | | |
+| **linux-stack subtotal** | **634** | | |
 | `test_logger.py` | 32 | unit | AuditLogger: session lifecycle, log_event, update_stm32_ack, flag_event, schema constraints |
 | `test_oversight.py` | 19 | unit | The `oversight` actor, `fetch_event`, and the schema changes step 9 required |
 | `test_dashboard.py` | 36 | unit | Dashboard API endpoints, read-only enforcement |
 | `test_dashboard_db.py` | 8 | unit | Connection handling, WAL mode, boolean coercion |
 | `test_smoke.py` | 4 | smoke | Audit service smoke: open a session, log, read back |
 | **audit-service subtotal** | **99** | | |
-| **Total** | **703** | | |
+| **Total** | **733** | | |
 
 Every count in this table was collected from the suite rather than estimated. An earlier version carried approximations, one of which was out by a factor of three.
 
@@ -1197,14 +1198,17 @@ Eleven build steps complete. This section records what was implemented and the d
 
 | `ActionType` | Alvik motor command |
 |---|---|
-| `HALT` | `stop_motors()` |
-| `MOVE_JOINT_1` | left wheel forward |
-| `MOVE_JOINT_2` | right wheel forward |
-| `MOVE_JOINT_3` | left wheel reverse |
-| `MOVE_JOINT_4` | right wheel reverse |
-| `MOVE_JOINT_5` | rotate left (differential) |
-| `MOVE_JOINT_6` | rotate right (differential) |
-| `GRIPPER_OPEN/CLOSE` | ignored (no gripper on Alvik) |
+| `NONE` 0x00 | no-op |
+| `HALT` 0x01 | stop both wheels |
+| `MOVE_FORWARD` 0x30 | both wheels forward |
+| `MOVE_BACKWARD` 0x31 | both wheels reverse |
+| `TURN_LEFT` 0x32 | differential left |
+| `TURN_RIGHT` 0x33 | differential right |
+| `STOP_MOTORS` 0x34 | stop both wheels |
+
+`MOVE_JOINT_1` through `MOVE_JOINT_6`, `GRIPPER_OPEN` and `GRIPPER_CLOSE` are reserved in the protocol for arm hardware this rig does not have, and are **not** in the map. The Alvik answers `UNKNOWN_ACTION` rather than guessing, which is gate 4 doing its job: an action the board cannot perform is refused on the record rather than silently dropped.
+
+An earlier version of this table claimed the joint actions drove the wheels and that the gripper actions were accepted and ignored. Neither was true of the code. `test_alvik_firmware.py` now pins the real behaviour.
 
 **Four firmware governance gates** (enforced in order in `alvik-firmware/main.py`):
 
@@ -1307,15 +1311,11 @@ The governance claim is that authority is separated in circuitry rather than ass
 | A fault in the de-energised sense channel is latent | Only one channel is energised at a time, so a break in the other is invisible until the contact next moves. Every command reads back, which is when it surfaces, but between transitions the pair is single-channel in effect. |
 | Physical access to the relay defeats it | Anyone who can bridge the contact restores motor power. The control is against software compromise and component failure, not against someone with a screwdriver. |
 
-### What is specified but not yet ported to the firmware
+### Parity between the model and the port
 
-The Python reference model is the specification and the C++ is the port, so a gap between them is a defect in the port rather than a difference of opinion.
+The Python reference model is the specification and the C++ is the port, so a gap between them is a defect in the port. One such gap existed from step 11 until it was found by a documentation audit: `LATCH_REQUEST` 0x32 and `LATCH_REPORT` 0xA3 were implemented and tested in the model and entirely absent from the firmware codec, so the arbiter could neither report the contact's position nor accept a request to move it.
 
-| Element | Model | Firmware |
-|---|---|---|
-| `LATCH_REQUEST` 0x32, `LATCH_REPORT` 0xA3 | Implemented, tested, and exercised end to end | **Absent.** `ipc_frame.h` carries the five original oversight types only. |
-
-The consequence on a real board: the arbiter still drives and reads the relay, still latches `OVERRIDE_ASSERT(LATCH_MISMATCH)` on a disagreement, and still shows the LATCH glyph. What it cannot do is report the contact position, or accept a request from the governance tier to open it. The parity harness does not catch this, because it checks the messages that exist rather than the ones that should, which is a gap in the harness as much as in the firmware.
+The parity harness did not catch it, because it compared the messages both sides implemented rather than the ones the specification lists. **That was the more useful finding.** Both message types are now in `ipc_frame.h/.cpp` and wired into the sketch, and `test_the_firmware_implements_every_oversight_type_the_model_has` enumerates `MsgType` and fails if any oversight type is missing from the firmware header. A harness that only checks what exists cannot find what is missing.
 
 ### What is not tested at all
 

@@ -198,8 +198,9 @@ int main() {
       in >> hex;
       SupervisorHeartbeat hb;
       AttestDigest digest;
+      LatchRequest latch_req;
       for (uint8_t byte : from_hex(hex)) {
-        const uint8_t hit = ipc_parser_feed(&parser, byte, &hb, &digest);
+        const uint8_t hit = ipc_parser_feed(&parser, byte, &hb, &digest, &latch_req);
         if (hit == MSG_SUPERVISOR_HEARTBEAT) {
           supervisor_on_heartbeat(&state, &hb, now_ms);
           std::cout << "RX HEARTBEAT ref=" << (unsigned long long)hb.last_audit_ref
@@ -213,6 +214,27 @@ int main() {
           std::cout << "RX DIGEST ref=" << (unsigned long long)digest.audit_ref
                     << " verdict=" << (unsigned)verdict
                     << " ack=" << to_hex(frame, n) << std::endl;
+        } else if (hit == MSG_LATCH_REQUEST) {
+          /* The arbiter decides. OPEN is always honoured; CLOSE is refused
+           * while an override stands. Either way a report goes back. */
+          const bool refused =
+              state.mode == SUP_OVERRIDE && latch_req.desired == LATCH_CLOSED;
+          if (!refused) {
+            if (latch_req.desired == LATCH_OPEN) {
+              latch_enforce_halt(&latch, now_ms);
+            } else if (latch_req.desired == LATCH_CLOSED) {
+              latch_permit(&latch, now_ms);
+            }
+          }
+          uint8_t frame[IPC_MAX_FRAME];
+          const size_t n = ipc_encode_latch_report(
+              frame, (uint8_t)latch.last.commanded, (uint8_t)latch.last.reported,
+              (uint8_t)latch.last.observed, latch.transitions, latch.mismatches);
+          std::cout << "RX LATCH_REQUEST ref="
+                    << (unsigned long long)latch_req.audit_ref
+                    << " desired=" << (unsigned)latch_req.desired
+                    << " refused=" << (refused ? 1 : 0)
+                    << " report=" << to_hex(frame, n) << std::endl;
         }
       }
       std::cout << "OK" << std::endl;
@@ -256,6 +278,16 @@ int main() {
       in >> ref >> verdict;
       uint8_t frame[IPC_MAX_FRAME];
       const size_t n = ipc_encode_attest_ack(frame, ref, (uint8_t)verdict);
+      std::cout << "HEX " << to_hex(frame, n) << std::endl;
+
+    } else if (cmd == "ENC_LATCH_REPORT") {
+      unsigned commanded = 0, reported = 0, observed = 0;
+      unsigned long transitions = 0, mismatches = 0;
+      in >> commanded >> reported >> observed >> transitions >> mismatches;
+      uint8_t frame[IPC_MAX_FRAME];
+      const size_t n = ipc_encode_latch_report(
+          frame, (uint8_t)commanded, (uint8_t)reported, (uint8_t)observed,
+          (uint32_t)transitions, (uint32_t)mismatches);
       std::cout << "HEX " << to_hex(frame, n) << std::endl;
 
     } else if (cmd == "CRC") {

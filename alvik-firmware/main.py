@@ -24,6 +24,11 @@ Governance contract enforced on this MCU:
      firmware to honour or ignore. These four gates remain as defence in
      depth: they cost nothing and they fail in the safe direction.
 
+A command that passes all four gates and then raises inside the motor driver
+is answered with REJ_SYSTEM_FAULT, not an ACK. `stm32_ack = 1` means accepted
+*and executed*, and acknowledging a failed motor call would put a false
+assertion of motion into the audit journal.
+
 Serial interface:
   VENTUNO Q connects to the Alvik ESP32-S3 via USB-C. Commands arrive
   on sys.stdin.buffer; responses are written to sys.stdout.buffer.
@@ -36,13 +41,22 @@ Hardware dependencies (Arduino_Alvik MicroPython library):
 import sys
 import time
 
-from arduino_alvik import ArduinoAlvik  # type: ignore[import]
+try:
+    from arduino_alvik import ArduinoAlvik  # type: ignore[import]
+except ImportError:  # pragma: no cover - the library exists only on the board
+    # Importable under CPython so the governance gates below can be tested.
+    # Every gate decision in `_handle` is pure logic over a decoded message;
+    # only the motor call itself touches the library. Leaving this file
+    # unimportable is why the gates went untested, and why a failed motor
+    # call was acknowledged as a success for two releases.
+    ArduinoAlvik = object  # type: ignore[assignment,misc]
 
 from ipc_codec import (
     CONFIDENCE_THRESHOLD,
     REJ_AUDIT_REF_ZERO,
     REJ_CONFIDENCE_BELOW_THRESHOLD,
     REJ_KILL_SWITCH_ACTIVE,
+    REJ_SYSTEM_FAULT,
     REJ_UNKNOWN_ACTION,
     FrameParser,
     encode_ack,
@@ -132,13 +146,28 @@ def _handle(msg, alvik, stdout, kill_switch_active: bool) -> None:
         stdout.flush()
         return
 
-    # All gates passed: execute and acknowledge
+    # All gates passed: execute, then acknowledge only what executed.
+    #
+    # A raise here used to be swallowed and acknowledged anyway, on the
+    # reasoning that the audit log should record the attempt. It did record
+    # something, and what it recorded was false: `stm32_ack = 1` means the
+    # command was accepted *and executed*, so a failed motor call produced a
+    # journal entry asserting motion that never happened.
+    #
+    # That is the same defect the governance filter had at the transmit layer,
+    # one board further out, and it is the shape this whole project exists to
+    # refuse: the component that was asked to act reporting that it acted.
+    # SYSTEM_FAULT is the honest answer. The attempt is still on record,
+    # because the row was written before the command was ever sent.
     try:
         action_fn(alvik, msg.action_param)
     except Exception:
-        # Motor driver error: acknowledge anyway so VENTUNO Q audit log
-        # records the attempt; the Alvik hardware may fault independently
-        pass
+        # Caught rather than propagated: a motor driver fault must not take
+        # the governance loop down with it. The board stays responsive and
+        # says what happened.
+        stdout.write(encode_reject(msg.audit_ref, REJ_SYSTEM_FAULT))
+        stdout.flush()
+        return
 
     stdout.write(encode_ack(msg.audit_ref))
     stdout.flush()

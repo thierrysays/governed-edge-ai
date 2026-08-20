@@ -13,6 +13,7 @@ import pytest
 
 from perception.base import DetectionResult
 from perception.network import (
+    MAX_MESSAGE_BYTES,
     DetectionResultClient,
     DetectionResultServer,
     _decode_message,
@@ -151,3 +152,101 @@ class TestClientServer:
         server.start()
         server.close()
         server.close()  # second close must not raise
+
+
+# ---------------------------------------------------------------------------
+# Hostile and broken peers
+# ---------------------------------------------------------------------------
+
+class TestHostilePeer:
+    """The listener binds 0.0.0.0:9100 on the board holding the audit journal,
+    and reads a four-byte length prefix from an unauthenticated peer before
+    anything else. Everything below is what that peer can try.
+
+    These exist because a security audit found the cap missing. It is the
+    third time this codebase has met the same shape: `MAX_PAYLOAD` in the IPC
+    codec and `IPC_MAX_FRAME` in the C++ parser are the other two.
+    """
+
+    def _serve_once(self, server, sink):
+        def _run():
+            try:
+                for batch in server.frames():
+                    sink.append(batch)
+            except OSError:
+                pass
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
+        return t
+
+    def test_an_oversized_length_prefix_is_refused(self):
+        """Four bytes claiming four gibibytes. Before the cap, the node tried
+        to accumulate it."""
+        port = _free_port()
+        server = DetectionResultServer(host="127.0.0.1", port=port)
+        server.start()
+        received: list = []
+        self._serve_once(server, received)
+
+        sock = socket.create_connection(("127.0.0.1", port), timeout=2.0)
+        sock.sendall((0xFFFFFFFF).to_bytes(4, "big"))
+        time.sleep(0.3)
+        sock.close()
+        server.close()
+
+        assert received == []
+        assert any("exceeds" in e for e in server.protocol_errors)
+
+    def test_a_message_at_the_cap_is_still_accepted(self):
+        """The bound has to be a bound, not a ceiling that also blocks real
+        traffic. A frame of detections is hundreds of bytes."""
+        assert MAX_MESSAGE_BYTES == 1 << 20
+
+    def test_undecodable_json_does_not_end_the_listener(self):
+        """One malformed message from any peer used to escape the accept loop
+        and stop the governance node hearing from anyone."""
+        port = _free_port()
+        server = DetectionResultServer(host="127.0.0.1", port=port)
+        server.start()
+        received: list = []
+        self._serve_once(server, received)
+
+        bad = b"{not json"
+        sock = socket.create_connection(("127.0.0.1", port), timeout=2.0)
+        sock.sendall(len(bad).to_bytes(4, "big") + bad)
+        time.sleep(0.2)
+        sock.close()
+
+        # The listener survived: a well-formed client still gets through.
+        client = DetectionResultClient(host="127.0.0.1", port=port)
+        client.send([DetectionResult(
+            detection_type="object", label="person", confidence=0.9,
+            timestamp_us=1, backend="test",
+        )])
+        time.sleep(0.3)
+        client.close()
+        server.close()
+
+        assert any("Undecodable" in e for e in server.protocol_errors)
+        assert received and received[0][0].label == "person"
+
+    def test_a_field_of_the_wrong_shape_is_refused_not_crashed(self):
+        port = _free_port()
+        server = DetectionResultServer(host="127.0.0.1", port=port)
+        server.start()
+        received: list = []
+        self._serve_once(server, received)
+
+        bad = b'[{"detection_type": "object", "label": "x", "confidence": "NaN-ish"}]'
+        sock = socket.create_connection(("127.0.0.1", port), timeout=2.0)
+        sock.sendall(len(bad).to_bytes(4, "big") + bad)
+        time.sleep(0.3)
+        sock.close()
+        server.close()
+
+        assert received == []
+        assert server.protocol_errors
+
+    def test_errors_are_kept_for_an_operator_to_read(self):
+        server = DetectionResultServer(host="127.0.0.1", port=_free_port())
+        assert server.protocol_errors == []
