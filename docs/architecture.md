@@ -1099,31 +1099,41 @@ The coverage gate is `--cov-fail-under=98` on both modules. Entry-point guards (
 
 | File | Tests | Class | Coverage area |
 |---|---|---|---|
-| `test_smoke_governance.py` | 7 | smoke | End-to-end sanity: import, accept flow, null pipeline, suppression, kill switch, multi-backend, log-before-act |
+| `test_ipc_codec.py` | 47 | unit | Encode/decode round-trips, CRC validation, FrameParser incremental input, all message types |
+| `test_mock_peer.py` | 35 | unit | State machine, local test input, confidence gate (float32), watchdog, reject reasons |
+| `test_perception.py` | 44 | unit | DetectionResult validation, threshold, stub backends, NullPipeline |
+| `test_capture.py` | 12 | unit | V4L2, synthetic and file frame sources |
+| `test_network.py` | 9 | unit | Length-prefixed JSON transport, both ends |
 | `test_governance.py` | 36 | unit | Empty frame, confidence gate, command mapping, multi-detection frame, log-before-act integrity, reject paths, timeout |
-| `test_ipc_codec.py` | ~40 | unit | Encode/decode round-trips, CRC validation, FrameParser incremental input, all message types |
-| `test_mock_peer.py` | ~40 | unit | State machine, kill switch, confidence gate (float32), watchdog, reject reasons |
-| `test_perception.py` | ~30 | unit | DetectionResult validation, threshold, stub backends, NullPipeline |
-| `test_smoke_ipc.py` | ~15 | smoke | IPC codec smoke: encode/decode, frame corruption detection |
-| `test_smoke_mock.py` | ~10 | smoke | Mock peer smoke: connect, send, receive ACK |
-| `test_smoke_perception.py` | ~6 | smoke | Perception smoke: stub backends produce expected labels |
-| `test_logger.py` | ~100 | unit | AuditLogger: session lifecycle, log_event, update_stm32_ack, flag_event, schema constraints |
-| `test_dashboard.py` | ~40 | unit | Dashboard API endpoints, read-only enforcement |
-| `test_smoke.py` (audit) | 4 | smoke | Audit service end-to-end |
-| `test_codec_oversight.py` | 34 | unit, regression | The five oversight message types, wire sizes, CRC, length guards, the oversized-header regression |
+| `test_uno_q_service.py` | 11 | unit | Multi-backend construction, stub fallback, camera loop |
+| `test_ventuno_q_service.py` | 6 | integration | TCP receive, filter, dispatch, mock mode |
+| `test_alvik_ipc_codec.py` | 19 | unit | The MicroPython codec subset, under CPython |
+| `test_codec_oversight.py` | 35 | unit, regression | The oversight message types, wire sizes, CRC, length guards, the oversized-header regression |
 | `test_attestation.py` | 33 | unit | Canonical rendering, chain mechanics, gap detection, tamper detection against a real database |
-| `test_mock_supervisor.py` | 35 | unit | The R4 reference model: latch, watchdog, digest verdicts, annunciator, retained ring |
+| `test_mock_supervisor.py` | 36 | unit | The R4 reference model: latch, watchdog, digest verdicts, annunciator, retained ring |
 | `test_supervisor_link.py` | 30 | unit | The VENTUNO Q side: heartbeats, digests, override handling, fail-closed, framing |
-| `test_oversight_governance.py` | 19 | integration | Invariants 7 and 8 end to end, against real ptys and a real database |
-| `test_oversight_faults.py` | 23 | unit | Pulled cables, dead descriptors, chain faults, resynchronisation |
-| `test_security_oversight.py` | 21 | security | Adversarial: four threat positions, see below |
-| `test_r4_firmware_parity.py` | 59 | integration | The compiled C++ firmware against the Python reference model, plus text guards on the sketch glue the harness cannot drive |
-| `test_smoke_oversight.py` | 8 | smoke | The running path end to end: accept, veto, reconcile, tamper, fail closed |
-| `test_coverage_completion.py` | 24 | unit | Error and hardware-only branches the rest of the suite leaves untouched |
 | `test_latch.py` | 38 | unit, regression | The relay driver: bistability across a power cycle, a lying register, the antivalent sense pair and its latent-fault case, cadence |
 | `test_latch_integration.py` | 29 | integration | Ownership and refusal, mismatch handling, and what each side may believe about isolation |
-| `test_oversight.py` (audit) | 19 | unit | The `oversight` actor, and `fetch_event()` |
-| `test_dashboard_db.py` (audit) | 8 | unit | The dashboard's real connection path, not the overridden one |
+| `test_oversight_governance.py` | 19 | integration | Invariants 7 and 8 end to end, against real ptys and a real database |
+| `test_oversight_faults.py` | 22 | unit | Pulled cables, dead descriptors, chain faults, resynchronisation |
+| `test_security_oversight.py` | 27 | security | Adversarial: five threat positions, see below |
+| `test_r4_firmware_parity.py` | 59 | integration | The compiled C++ firmware against the Python reference model, plus text guards on the sketch glue the harness cannot drive |
+| `test_coverage_completion.py` | 27 | unit | Error and hardware-only branches the rest of the suite leaves untouched |
+| `test_smoke_governance.py` | 7 | smoke | End-to-end sanity: import, accept flow, null pipeline, suppression, kill switch, multi-backend, log-before-act |
+| `test_smoke_ipc.py` | 5 | smoke | IPC codec smoke: encode/decode, frame corruption detection |
+| `test_smoke_mock.py` | 5 | smoke | Mock peer smoke: connect, send, receive ACK |
+| `test_smoke_perception.py` | 5 | smoke | Perception smoke: stub backends produce expected labels |
+| `test_smoke_oversight.py` | 8 | smoke | The running path end to end: accept, veto, reconcile, tamper, fail closed |
+| **linux-stack subtotal** | **604** | | |
+| `test_logger.py` | 32 | unit | AuditLogger: session lifecycle, log_event, update_stm32_ack, flag_event, schema constraints |
+| `test_oversight.py` | 19 | unit | The `oversight` actor, `fetch_event`, and the schema changes step 9 required |
+| `test_dashboard.py` | 36 | unit | Dashboard API endpoints, read-only enforcement |
+| `test_dashboard_db.py` | 8 | unit | Connection handling, WAL mode, boolean coercion |
+| `test_smoke.py` | 4 | smoke | Audit service smoke: open a session, log, read back |
+| **audit-service subtotal** | **99** | | |
+| **Total** | **703** | | |
+
+Every count in this table was collected from the suite rather than estimated. An earlier version carried approximations, one of which was out by a factor of three.
 
 ### Key test patterns
 
@@ -1147,16 +1157,15 @@ assert row["command_sent"] == 1   # Linux gate passed it
 assert row["stm32_ack"] == 0     # MCU gate caught the float32 rounding
 ```
 
-**Adversarial security testing** (`test_security_oversight.py`): four threat positions, each asserting both what holds and what does not.
+**Adversarial security testing** (`test_security_oversight.py`): five threat positions, each asserting both what holds and what does not.
 
 | Position | Tested |
 |---|---|
 | T1, a compromised governance host | No message it can send clears an override. The whole outbound vocabulary is thrown at a latched node, including replayed R4 messages. |
 | T2, an attacker on the oversight cable | A forged `OVERRIDE_CLEAR` *does* release the soft veto. The relay is unaffected: the whole outbound vocabulary thrown at a latched contact leaves it open. |
-| T5, the latch relay itself | A stuck contact, a lying module register, either sense channel broken, a shorted or dark sense pair, a contact that drifts with no edge, and power cut to the arbiter. All detected or survived, and none of them reads as isolation. |
 | T3, a compromised host with database write access | Edits, deletions, backdating and verbatim reinsertion are each detected against the retained digests. An unwitnessed database is shown to verify clean, which is why the digests live elsewhere. |
 | T4, malformed or hostile input | Oversized length headers, random bytes, corrupt CRCs, SQL in a detection label, separator injection into the canonical row rendering. |
-| T5, the latch relay | The whole outbound vocabulary thrown at a latched contact, a forged `LATCH_REPORT`, a module lying about its own position, a reflashed Alvik, and power cut to the arbiter. |
+| T5, the latch relay | The whole outbound vocabulary thrown at a latched contact, a forged `LATCH_REPORT`, a stuck contact, a module lying about its own position, either sense channel broken, a shorted or dark sense pair, a contact that drifts with no edge, a reflashed Alvik, and power cut to the arbiter. All detected or survived, and none of them reads as isolation. |
 
 The T2 tests exist to document a limit rather than to demonstrate a strength. A control whose limits are undocumented is a control nobody can rely on.
 
@@ -1281,7 +1290,7 @@ The governance claim is that authority is separated in circuitry rather than ass
 | The governance process crashes or hangs | The R4 watchdog latches within 2 s and opens the contact. Restarting the software does not clear it. |
 | Power is lost at every board | The contact holds where it was. Bistable: no coil current is needed to keep the motors isolated. |
 | The Alvik is reflashed to ignore its gates | Irrelevant to the physical path. There is no pin for it to stop honouring; the supply is simply absent. |
-| The relay is commanded and does not move | The sense line disagrees with the module's register, both sides latch an override independently, and the annunciator shows LATCH. |
+| The relay is commanded and does not move | The sense pair disagrees with the module's register, the arbiter latches an override, and the annunciator shows LATCH. In the Python model the governance tier receives a `LATCH_REPORT` and latches its own override on the same reading; the C++ firmware does not yet carry that message type, so on a board the governance tier learns of it as an override rather than as a position. |
 | The oversight cable is cut | The governance tier fails closed within 3 s; the R4's hard line is unaffected. |
 | Hostile bytes on either link | Length guards, CRC and resynchronisation. Tested with oversized headers, random bytes and corrupt frames. |
 | SQL or separator injection through a detection label | Parameterised writes; the canonical rendering is separator-safe. Both tested. |
@@ -1297,6 +1306,16 @@ The governance claim is that authority is separated in circuitry rather than ass
 | Reading digests back needs the Wi-Fi console | The least satisfying part of the design. |
 | A fault in the de-energised sense channel is latent | Only one channel is energised at a time, so a break in the other is invisible until the contact next moves. Every command reads back, which is when it surfaces, but between transitions the pair is single-channel in effect. |
 | Physical access to the relay defeats it | Anyone who can bridge the contact restores motor power. The control is against software compromise and component failure, not against someone with a screwdriver. |
+
+### What is specified but not yet ported to the firmware
+
+The Python reference model is the specification and the C++ is the port, so a gap between them is a defect in the port rather than a difference of opinion.
+
+| Element | Model | Firmware |
+|---|---|---|
+| `LATCH_REQUEST` 0x32, `LATCH_REPORT` 0xA3 | Implemented, tested, and exercised end to end | **Absent.** `ipc_frame.h` carries the five original oversight types only. |
+
+The consequence on a real board: the arbiter still drives and reads the relay, still latches `OVERRIDE_ASSERT(LATCH_MISMATCH)` on a disagreement, and still shows the LATCH glyph. What it cannot do is report the contact position, or accept a request from the governance tier to open it. The parity harness does not catch this, because it checks the messages that exist rather than the ones that should, which is a gap in the harness as much as in the firmware.
 
 ### What is not tested at all
 

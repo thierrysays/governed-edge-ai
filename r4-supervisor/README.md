@@ -85,9 +85,23 @@ one stays latent until the contact next moves. That is one reason every command
 reads back and the pair is polled at a fixed cadence rather than waiting for an
 edge: a contact that silently failed to move raises no edge either.
 
-Any disagreement latches an `OVERRIDE_ASSERT(LATCH_MISMATCH)`, shows the LATCH
-glyph, and is acted on independently by both sides of the link. Neither side is
-allowed to rely on the other having noticed.
+Any disagreement latches an `OVERRIDE_ASSERT(LATCH_MISMATCH)` and shows the
+LATCH glyph.
+
+**One gap, stated rather than left to be discovered.** The Python reference
+model also exchanges `LATCH_REQUEST` (0x32) and `LATCH_REPORT` (0xA3), so in
+the model both sides see every reading and the governance tier can ask for the
+contact to be opened. **This firmware implements neither.** Its codec carries
+the five original oversight types and no more, so on a real board the arbiter
+announces a latch fault as an override and the governance tier learns the
+position only by inference.
+
+That is a port lagging its specification, which is exactly what the parity
+harness exists to prevent, and the harness does not catch it because it checks
+the messages that exist rather than the ones that should. Closing it means two
+message types in `ipc_frame.h/.cpp`, a report emitted from the sketch's poll,
+a decoder for the request, and parity tests for both. Until then, treat any
+document describing the latch protocol as describing the model.
 
 ## Wiring
 
@@ -112,7 +126,7 @@ ground to get wrong and no pin on the governed board to depend on.
 | `r4_supervisor.ino` | Sketch: pins, LED matrix glyphs, serial I/O, relay and sense glue, optional Wi-Fi console |
 | `latch.h` / `.cpp` | Latch relay driver. Pure logic; hardware injected as four function pointers. |
 | `supervisor_state.h` / `.cpp` | The state machine. No Arduino headers: pure logic, host-compilable. |
-| `ipc_frame.h` / `.cpp` | IPC codec, oversight subset. CRC-16/CCITT, seven message types. |
+| `ipc_frame.h` / `.cpp` | IPC codec, oversight subset. CRC-16/CCITT, five message types. |
 | `test/parity_harness.cpp` | Host driver that exposes the three logic files over a line protocol |
 
 The sketch deliberately implements no decoder for `COMMAND_REQUEST`. This board

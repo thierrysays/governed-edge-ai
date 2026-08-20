@@ -4,6 +4,22 @@ Running record of decisions, discoveries, and blockers for the Glossolalie Advis
 
 ---
 
+## 2026-08-19: Documentation consolidation
+
+**What changed.** Three documents left the repository: a brief telling an agent which i18n keys to paste into a website maintained elsewhere, a peripherals shopping list, and a session summary. `docs/state-of-play.md` replaces all three with one thing they were each doing badly: a set of current facts for anyone writing about the project.
+
+**Why they went.** Each was written for an agent rather than a reader, and each was a second place for the same facts to go stale. The board count, the test count and the physical enforcement path all changed twice in one day, and every copy had to be chased. The parts list that matters was already in the deployment guide, Part 1, in the order you build the rig and with the reasoning attached.
+
+**The cost claim is withdrawn with no replacement.** "Reproducible for under EUR 200" was true of the three-board rig. Five boards, a latch relay, two opto-isolators, three Modulino modules, two cameras, ribbons and journal storage are not close, and no total has been taken against real invoices. Estimating one would put a made-up number on the argument this project is least entitled to be loose about. What survives is the claim the price was standing in for: commodity parts, no bespoke silicon.
+
+**The state of play was then verified rather than reread**, and it did not survive intact. It carried a status column reading "Running" for four boards, in a document whose own later section says nothing has been powered on. A writer skimming the table would have published a working rig. The column is now about code, with a warning above it.
+
+Four smaller corrections came out of the same pass: the licence row implied hardware design files exist, the camera splay quoted a rounded 120 degrees where the decision was taken on 52 degrees between axes and 114 of coverage, the two faults in the old kill line read as observed when both were reasoned, and the document counted three claims where the architecture names four invariants.
+
+**The lesson is the same one step 11 taught in hardware.** Rereading a document confirms what you meant. Checking each claim against the tree finds what you wrote. Only the second kind of pass found the contradiction, and it was sitting eighty lines from the sentence it contradicted.
+
+---
+
 ## 2026-08-19: Step 11: The latch relay replaces the GPIO kill line
 
 **What was built.**
@@ -102,6 +118,36 @@ Neither would have been found by testing the happy path. Both were found by aski
 **Insight for article.** The interesting part of this step was not the firmware. It was discovering, by writing the threat model down, that the previous version's independence claim was weaker than the diagram suggested. The controls were real and the diagram was honest about what existed; it was silent about what those controls depended on. That silence is where most governance architecture goes wrong, and it survives review precisely because everything on the page is true.
 
 The correction is cheap in hardware and expensive in honesty. A twenty-euro board and four jumper wires buy a third line of defence. What they cost is the obligation to write down that the serial link is forgeable, the chain is unkeyed, the digest window is 64 entries deep, and no timing figure in the specification has been measured on hardware. A control whose limits are undocumented is a control nobody can rely on, and a governance architecture that only publishes its strengths is doing the thing it exists to prevent.
+
+---
+
+## 2026-08-05: Step 8: UNO Q perception service and the board-to-board transport
+
+**What was built.** `linux-stack/perception/uno_q_service.py` and `network.py`: the camera loop, the multi-backend pipeline, and the link from the perception node to the governance node.
+
+**Why the transport is length-prefixed JSON and not protobuf or gRPC.** Simplicity for a demonstrator with no hardware access yet. `DetectionResult` is a frozen dataclass and serialises with no schema compilation step; a 4-byte big-endian length prefix gives framing with no HTTP or TLS dependency to configure across two boards. The upgrade path stays open and narrow: `DetectionResultServer` and `DetectionResultClient` are the only surface that would change.
+
+That trade is worth naming rather than defending. JSON over TCP is the wrong answer for a production perception link, where frame rate and payload size make the encoding cost real. It is the right answer for a link whose job today is to prove that perception and governance sit on different boards.
+
+**Why backend construction catches `OSError`.** Each production backend is attempted independently and falls back to a stub on `ImportError`, `RuntimeError` or `OSError`. The third is not defensive padding: a backend can be installed while its model weights are absent, and the resulting `FileNotFoundError` is an `OSError`. Catching only the first two produced a service that crashed on a half-installed model instead of announcing a stub and starting.
+
+**The fallback is announced, not silent.** Every substitution is logged at startup. A perception node quietly running stubs would make the governance path look healthy while it was fed synthetic detections, which is the failure mode a demonstrator can least afford.
+
+---
+
+## 2026-08-05: Step 7: Alvik firmware
+
+**What was built.** `alvik-firmware/`: a MicroPython IPC codec, a motor map, and four governance gates on the governed board itself.
+
+**Why MicroPython, and why the testable subset avoids it.** The Alvik runs MicroPython, so the firmware had to. The codec and the motor map use no MicroPython-specific API, which lets the whole testable surface run under CPython in the ordinary suite. Only the hardware calls into `arduino_alvik` are unreachable from a host.
+
+**Why four gates on the board being governed.** The governance argument requires safety invariants to survive all the way to the actuator rather than stopping at the governance brain. The gates run on a separate processor, in a different language, with no shared code path with the Linux filter: `audit_ref != 0`, then the local kill input, then an independent float32 confidence gate, then a known action type.
+
+The independence is the point. A bug in the Linux confidence gate does not disable the firmware one, because neither can see the other.
+
+**What this step got wrong, corrected at step 11.** Gate 2 read a GPIO pin driven by the oversight node, and it was presented as the hard enforcement path. It was not one. A gate that the governed board's own firmware chooses to honour is a software gate wearing a hardware costume, and reflashing the Alvik removes it. The pin survives as a local test input for firmware work, and is documented as explicitly not a governance control.
+
+**Why the motor map ignores gripper actions.** `GRIPPER_OPEN` and `GRIPPER_CLOSE` are valid in the protocol and the Alvik has no gripper. They are accepted and ignored rather than rejected, because the protocol is shared with hardware the demonstrator does not have, and a reject would report a governance refusal where none occurred.
 
 ---
 

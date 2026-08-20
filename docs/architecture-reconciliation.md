@@ -239,7 +239,7 @@ Classes: **A** load-bearing · **B** substantive but contained · **C** document
 | D7 | Audit journal integrity | Signed | Unsigned SHA-256 chain | **A** | 10 |
 | D8 | Safety envelope | Modulino Distance on the R4, outside the vision pipeline | Pose-model `proximity_breach`, inside it | **B** | 3 |
 | D9 | Proof of stop | Modulino Movement IMU on the R4 | Absent | **B** | 3 |
-| D10 | Annunciation | R4 matrix, ALLOW / GATED / HALT, plus a buzzer | R4 matrix, four glyphs | **C** | 3 |
+| D10 | Annunciation | R4 matrix, ALLOW / GATED / HALT, plus a buzzer | R4 matrix, five glyphs since step 11 added LATCH. ALLOW / GATED / HALT and the buzzer are step 12. | **C** | 3 |
 | D11 | STM32H5 firmware | Zephyr, < 1 ms arbiter | `rt-control/` empty; only `MockSTM32H5` | **A** | 12 |
 | D12 | Audit storage | M.2 NVMe, separate from OS | Local SQLite | **C** | config |
 | D13 | UNO Q ↔ VENTUNO Q | Ethernet 2.5 Gb | TCP over Wi-Fi | **C** | docs |
