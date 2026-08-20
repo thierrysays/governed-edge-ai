@@ -4,6 +4,28 @@ Running record of decisions, discoveries, and blockers for the Glossolalie Advis
 
 ---
 
+## 2026-08-20: Security audit, and the gap it closed
+
+A full QA run plus a security pass deeper than `make qa` performs: bandit at every severity rather than medium and above, a secret scan, a sweep for dangerous calls, a review of the SQL and the network surfaces, and a bounds check on the C++ added at step 11. Three defects, none of them where the documentation was looking.
+
+**A failed motor call was acknowledged as a success.** Bandit's only finding was a low-severity `try/except/pass` on the Alvik, with a comment explaining that a motor driver error should be acknowledged anyway so the journal records the attempt. The comment was reasonable and the behaviour was not. `stm32_ack = 1` means accepted *and executed*, so a raising motor call put a false assertion of motion into the audit journal. It is the same shape as the transmit-layer defect found at step 9, one board further out, and it is precisely what this project exists to refuse: the component that was asked to act reporting that it acted. It now answers `SYSTEM_FAULT`, and the attempt is still on record because the row was written before the command was sent.
+
+**Why it survived.** `alvik-firmware/main.py` had no tests at all. An unconditional `from arduino_alvik import ArduinoAlvik` made it unimportable under CPython, so the four governance gates on the governed board were the least tested code in the repository while being among the most safety-relevant. The import is now optional and the file has thirteen tests. Two of them immediately contradicted the architecture document, which claimed `MOVE_JOINT_1` through `_6` drove the wheels and the gripper actions were accepted and ignored. Neither was true: the map covers the Alvik range only, and everything else is refused with `UNKNOWN_ACTION`.
+
+**The TCP listener had no length cap.** It binds `0.0.0.0:9100` on the board holding the audit journal and read a four-byte length prefix from an unauthenticated peer before anything else. A peer sending `0xFFFFFFFF` made it accumulate four gibibytes. A malformed message also escaped the accept loop and ended the listener, so one bad frame from anyone on the LAN stopped the governance node hearing from the perception node.
+
+This is the third instance of the same bug class here. `MAX_PAYLOAD` in the IPC codec was the first, added after an oversized header wedged the serial link permanently. `IPC_MAX_FRAME` in the C++ parser was the second. **A length that arrives before its data is a promise, and a promise from an unauthenticated peer needs a bound.** Worth writing down as a rule rather than fixing a third time.
+
+**The specification gap, closed.** `LATCH_REQUEST` 0x32 and `LATCH_REPORT` 0xA3 existed in the Python model and not in the firmware, so the arbiter could neither report the contact position nor accept a request to move it. Both are now in `ipc_frame.h/.cpp` and wired into the sketch, with the same asymmetry the model has: OPEN always honoured, CLOSED refused while an override stands.
+
+**The harness gap was the more useful finding.** The parity suite compared the messages both sides implemented, so a message the firmware never got was invisible and the suite stayed green. It now enumerates the model's oversight types and fails on any the firmware lacks. A harness that only checks what exists cannot find what is missing.
+
+**What the audit did not find**, which is worth recording so the next pass knows what has been looked at: no secrets in the tree, no `eval`, `exec`, `pickle`, `os.system`, `shell=True` or `yaml.load`, no SQL built by interpolation, no bandit findings at any severity after the fix, no known CVEs in dependencies, and the new C++ encoder and decoder both bounded well inside `IPC_MAX_FRAME`. One observation rather than a finding: requirements use `>=` rather than pins, so a future release of a dependency can change behaviour without a commit here.
+
+**QA results.** 733 tests, 100% line coverage on both modules, ruff, mypy strict, bandit and pip-audit clean. The parity harness compiles with `-Wall -Wextra -Werror`.
+
+---
+
 ## 2026-08-19: Documentation consolidation
 
 **What changed.** Three documents left the repository: a brief telling an agent which i18n keys to paste into a website maintained elsewhere, a peripherals shopping list, and a session summary. `docs/state-of-play.md` replaces all three with one thing they were each doing badly: a set of current facts for anyone writing about the project.
@@ -147,7 +169,7 @@ The independence is the point. A bug in the Linux confidence gate does not disab
 
 **What this step got wrong, corrected at step 11.** Gate 2 read a GPIO pin driven by the oversight node, and it was presented as the hard enforcement path. It was not one. A gate that the governed board's own firmware chooses to honour is a software gate wearing a hardware costume, and reflashing the Alvik removes it. The pin survives as a local test input for firmware work, and is documented as explicitly not a governance control.
 
-**Why the motor map ignores gripper actions.** `GRIPPER_OPEN` and `GRIPPER_CLOSE` are valid in the protocol and the Alvik has no gripper. They are accepted and ignored rather than rejected, because the protocol is shared with hardware the demonstrator does not have, and a reject would report a governance refusal where none occurred.
+**What the motor map actually covers.** The Alvik range only: `HALT`, `MOVE_FORWARD`, `MOVE_BACKWARD`, `TURN_LEFT`, `TURN_RIGHT`, `STOP_MOTORS` and a no-op. The protocol also carries `MOVE_JOINT_1` to `MOVE_JOINT_6` and the two gripper actions, reserved for arm hardware this rig does not have, and those are deliberately absent from the map so gate 4 refuses them with `UNKNOWN_ACTION`. A board that cannot perform an action says so on the record rather than dropping it silently.
 
 ---
 

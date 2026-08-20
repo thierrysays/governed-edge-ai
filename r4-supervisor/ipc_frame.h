@@ -10,7 +10,7 @@
  *   [4..]   payload
  *   [..]    CRC-16/CCITT over bytes 0..3+N, uint16 LE
  *
- * Only the five oversight message types are implemented here. The UNO R4
+ * Only the seven oversight message types are implemented here. The UNO R4
  * WiFi never sees a CommandRequest: it is not on the actuation path, and
  * leaving those decoders out is a deliberate reduction of what this board
  * can be talked into doing.
@@ -31,10 +31,12 @@
 /* Message types: VENTUNO Q -> R4 */
 #define MSG_SUPERVISOR_HEARTBEAT 0x30
 #define MSG_ATTEST_DIGEST        0x31
+#define MSG_LATCH_REQUEST        0x32
 /* Message types: R4 -> VENTUNO Q */
 #define MSG_OVERRIDE_ASSERT      0xA0
 #define MSG_OVERRIDE_CLEAR       0xA1
 #define MSG_ATTEST_ACK           0xA2
+#define MSG_LATCH_REPORT         0xA3
 
 /* OverrideReason */
 #define OVR_OPERATOR_BUTTON           0x01
@@ -66,12 +68,28 @@ typedef struct {
   uint8_t  digest[IPC_DIGEST_BYTES];
 } AttestDigest;
 
+/*
+ * A request from the governance tier to move the contact.
+ *
+ * Asymmetric on purpose, and the asymmetry is enforced by the caller rather
+ * than here: a request to OPEN is always honoured, because more ways to stop
+ * are safe, and a request to CLOSE is refused outright while an override
+ * stands. Nothing on this wire can talk an override down.
+ */
+typedef struct {
+  uint64_t audit_ref;
+  uint8_t  desired;   /* LatchPosition: 0 OPEN, 1 CLOSED, 2 UNKNOWN */
+} LatchRequest;
+
 uint16_t ipc_crc16_ccitt(const uint8_t *data, size_t len);
 
 /* Encoders. Each returns the number of bytes written into out. */
 size_t ipc_encode_override_assert(uint8_t *out, uint64_t timestamp_us, uint8_t reason);
 size_t ipc_encode_override_clear(uint8_t *out, uint64_t timestamp_us);
 size_t ipc_encode_attest_ack(uint8_t *out, uint64_t audit_ref, uint8_t verdict);
+size_t ipc_encode_latch_report(uint8_t *out, uint8_t commanded, uint8_t reported,
+                               uint8_t observed, uint32_t transitions,
+                               uint32_t mismatches);
 
 /*
  * Incremental parser for the inbound stream. Feed bytes one at a time; the
@@ -88,11 +106,13 @@ typedef struct {
 void ipc_parser_reset(IpcParser *p);
 
 /*
- * Returns one of MSG_SUPERVISOR_HEARTBEAT / MSG_ATTEST_DIGEST when a frame
- * of that type completed on this byte, or 0 otherwise. On a hit, the decoded
- * value is written to the matching out-parameter.
+ * Returns one of MSG_SUPERVISOR_HEARTBEAT / MSG_ATTEST_DIGEST /
+ * MSG_LATCH_REQUEST when a frame of that type completed on this byte, or 0
+ * otherwise. On a hit, the decoded value is written to the matching
+ * out-parameter.
  */
 uint8_t ipc_parser_feed(IpcParser *p, uint8_t byte,
-                        SupervisorHeartbeat *hb, AttestDigest *digest);
+                        SupervisorHeartbeat *hb, AttestDigest *digest,
+                        LatchRequest *latch_req);
 
 #endif /* GOVERNED_EDGE_AI_IPC_FRAME_H */

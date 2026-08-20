@@ -30,6 +30,25 @@ from perception.base import DetectionResult
 
 _LEN_FMT = struct.Struct(">I")  # 4-byte big-endian uint32
 
+#: Largest message this listener will read, in bytes.
+#:
+#: The length prefix is four bytes and arrives from the network before
+#: anything has been authenticated, so without a cap a peer that sends
+#: 0xFFFFFFFF makes the governance node accumulate four gibibytes into a
+#: bytearray. That is the board holding the audit journal and the governance
+#: filter, and exhausting it is a stop of the worst kind: unaudited, and
+#: caused by whoever can reach port 9100.
+#:
+#: This is the third time this codebase has met the same bug. `MAX_PAYLOAD`
+#: in the IPC codec is the first, added after an oversized header wedged the
+#: serial link permanently; the C++ parser's `IPC_MAX_FRAME` check is the
+#: second. A length that arrives before the data is a promise, and a promise
+#: from an unauthenticated peer needs a bound.
+#:
+#: 1 MiB is far above a real frame of detections, which runs to hundreds of
+#: bytes, and far below anything that troubles the node.
+MAX_MESSAGE_BYTES: int = 1 << 20
+
 
 # ---------------------------------------------------------------------------
 # Serialisation helpers
@@ -75,6 +94,15 @@ def _recv_exactly(sock: socket.socket, n: int) -> bytes:
 
 def _decode_message(raw: bytes) -> list[DetectionResult]:
     return [_dict_to_result(d) for d in json.loads(raw.decode())]
+
+
+class ProtocolError(Exception):
+    """A peer sent something this listener will not read.
+
+    Raised rather than returned so the caller has to decide what to do with
+    the connection. The listener drops it and keeps serving: one hostile or
+    broken client must not take the governance node's ear off everyone else.
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -151,6 +179,10 @@ class DetectionResultServer:
         self._host = host
         self._port = port
         self._server: socket.socket | None = None
+        #: Rejections, oldest first. Kept rather than logged and forgotten:
+        #: a peer repeatedly sending oversized or undecodable messages is a
+        #: fact an operator should be able to read off the node.
+        self.protocol_errors: list[str] = []
 
     def start(self) -> None:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -168,10 +200,17 @@ class DetectionResultServer:
         if self._server is None:
             raise RuntimeError("Call start() before frames()")
         while True:
-            conn, _ = self._server.accept()
+            server = self._server
+            if server is None:
+                # close() ran while this loop was between accepts. Ending the
+                # generator is the honest answer; reaching for the attribute
+                # anyway raised AttributeError, which no caller catches
+                # because it is not a network error.
+                return
+            conn, _ = server.accept()
             try:
                 yield from self._read_connection(conn)
-            except (EOFError, OSError):
+            except (EOFError, OSError, ProtocolError):
                 conn.close()
 
     def _read_connection(
@@ -180,8 +219,26 @@ class DetectionResultServer:
         while True:
             header = _recv_exactly(conn, 4)
             (length,) = _LEN_FMT.unpack(header)
+            if length > MAX_MESSAGE_BYTES:
+                # Refuse before reading a single byte of the body. Reading it
+                # to stay in sync is what the serial parser does, because a
+                # stream has no other framing; here the connection itself is
+                # the frame, so dropping it costs nothing and reads nothing.
+                self.protocol_errors.append(
+                    f"Message length {length} exceeds {MAX_MESSAGE_BYTES}: "
+                    f"dropping the connection"
+                )
+                raise ProtocolError("oversized message")
             raw = _recv_exactly(conn, length)
-            results = _decode_message(raw)
+            try:
+                results = _decode_message(raw)
+            except (ValueError, KeyError, TypeError) as exc:
+                # Malformed JSON, a missing field, a value of the wrong shape.
+                # Before this was caught, one bad message from any peer on the
+                # LAN ended the listener loop and the governance node stopped
+                # hearing from the perception node at all.
+                self.protocol_errors.append(f"Undecodable message: {exc}")
+                raise ProtocolError("undecodable message") from exc
             if results:
                 yield results
 

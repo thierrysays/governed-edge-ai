@@ -30,6 +30,12 @@ static void put_u16(uint8_t *out, uint16_t v) {
   out[1] = (uint8_t)((v >> 8) & 0xFF);
 }
 
+static void put_u32(uint8_t *out, uint32_t v) {
+  for (uint8_t i = 0; i < 4; i++) {
+    out[i] = (uint8_t)((v >> (8 * i)) & 0xFF);
+  }
+}
+
 static void put_u64(uint8_t *out, uint64_t v) {
   for (uint8_t i = 0; i < 8; i++) {
     out[i] = (uint8_t)((v >> (8 * i)) & 0xFF);
@@ -83,6 +89,20 @@ size_t ipc_encode_attest_ack(uint8_t *out, uint64_t audit_ref, uint8_t verdict) 
   return finish(out, MSG_ATTEST_ACK, 9);
 }
 
+/* All three positions travel, not just the observation. A receiver that saw
+ * only `observed` could not tell a contact resting where it was asked to rest
+ * from one that never moved, which is the whole point of the read-back. */
+size_t ipc_encode_latch_report(uint8_t *out, uint8_t commanded, uint8_t reported,
+                               uint8_t observed, uint32_t transitions,
+                               uint32_t mismatches) {
+  out[4] = commanded;
+  out[5] = reported;
+  out[6] = observed;
+  put_u32(&out[7], transitions);
+  put_u32(&out[11], mismatches);
+  return finish(out, MSG_LATCH_REPORT, 11);
+}
+
 /* ------------------------------------------------------------------ */
 /* Incremental parser                                                  */
 /* ------------------------------------------------------------------ */
@@ -92,8 +112,8 @@ void ipc_parser_reset(IpcParser *p) {
   p->expected = 0;
 }
 
-static uint8_t decode_complete(IpcParser *p,
-                               SupervisorHeartbeat *hb, AttestDigest *digest) {
+static uint8_t decode_complete(IpcParser *p, SupervisorHeartbeat *hb,
+                               AttestDigest *digest, LatchRequest *latch_req) {
   const uint8_t type = p->buf[1];
   const uint16_t payload_len = get_u16(&p->buf[2]);
   const uint8_t *payload = &p->buf[4];
@@ -117,11 +137,18 @@ static uint8_t decode_complete(IpcParser *p,
     return MSG_ATTEST_DIGEST;
   }
 
+  if (type == MSG_LATCH_REQUEST && payload_len == 9) {
+    latch_req->audit_ref = get_u64(&payload[0]);
+    latch_req->desired   = payload[8];
+    return MSG_LATCH_REQUEST;
+  }
+
   return 0;  /* well-formed but not a message this board acts on */
 }
 
 uint8_t ipc_parser_feed(IpcParser *p, uint8_t byte,
-                        SupervisorHeartbeat *hb, AttestDigest *digest) {
+                        SupervisorHeartbeat *hb, AttestDigest *digest,
+                        LatchRequest *latch_req) {
   if (p->len == 0 && byte != IPC_MAGIC) {
     return 0;  /* resynchronising: discard until the magic byte */
   }
@@ -147,7 +174,7 @@ uint8_t ipc_parser_feed(IpcParser *p, uint8_t byte,
     return 0;
   }
 
-  const uint8_t result = decode_complete(p, hb, digest);
+  const uint8_t result = decode_complete(p, hb, digest, latch_req);
   ipc_parser_reset(p);
   return result;
 }

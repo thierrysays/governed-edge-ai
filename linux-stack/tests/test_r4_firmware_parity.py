@@ -27,6 +27,10 @@ from ipc.codec import (
     AttestAck,
     AttestDigest,
     AttestVerdict,
+    LatchPosition,
+    LatchReport,
+    LatchRequest,
+    MsgType,
     OverrideAssert,
     OverrideClear,
     OverrideReason,
@@ -400,6 +404,136 @@ def test_python_version_is_supported():
 # ---------------------------------------------------------------------------
 # Latch relay: the C++ driver against the Python model
 # ---------------------------------------------------------------------------
+
+class TestLatchProtocolParity:
+    """The two latch message types, across the wire and through the arbiter.
+
+    These exist because the gap they close was invisible for a release. The
+    firmware drove the relay and read it back correctly, and simply had no
+    encoder or decoder for LATCH_REQUEST and LATCH_REPORT, so the governance
+    tier could neither ask nor be told. The suite stayed green throughout,
+    because it compared the messages both sides implemented rather than the
+    ones the specification lists.
+
+    A parity harness that only checks what exists cannot find what is missing.
+    The two constants tests below are the cheap guard against that recurring.
+    """
+
+    def test_both_message_types_exist_in_the_firmware(self):
+        header = (_FIRMWARE / "ipc_frame.h").read_text()
+        assert f"#define MSG_LATCH_REQUEST        0x{int(MsgType.LATCH_REQUEST):02X}" in header
+        assert f"#define MSG_LATCH_REPORT         0x{int(MsgType.LATCH_REPORT):02X}" in header
+
+    def test_the_firmware_implements_every_oversight_type_the_model_has(self):
+        """The guard the harness was missing.
+
+        Every message type on the oversight link must be present in the
+        firmware codec. Adding one to the model and forgetting the port is
+        exactly what happened, and it should fail here rather than on a bench.
+        """
+        header = (_FIRMWARE / "ipc_frame.h").read_text()
+        oversight = {
+            MsgType.SUPERVISOR_HEARTBEAT, MsgType.ATTEST_DIGEST,
+            MsgType.LATCH_REQUEST, MsgType.OVERRIDE_ASSERT,
+            MsgType.OVERRIDE_CLEAR, MsgType.ATTEST_ACK, MsgType.LATCH_REPORT,
+        }
+        missing = [t.name for t in oversight if f"0x{int(t):02X}" not in header]
+        assert not missing, f"firmware codec is missing {missing}"
+
+    @pytest.mark.parametrize(
+        ("commanded", "reported", "observed", "transitions", "mismatches"),
+        [
+            (LatchPosition.OPEN, LatchPosition.OPEN, LatchPosition.OPEN, 0, 0),
+            (LatchPosition.CLOSED, LatchPosition.CLOSED, LatchPosition.CLOSED, 7, 2),
+            (LatchPosition.OPEN, LatchPosition.CLOSED, LatchPosition.UNKNOWN,
+             2**31, 2**32 - 1),
+        ],
+    )
+    def test_report_encoding_is_byte_identical(
+        self, harness, commanded, reported, observed, transitions, mismatches
+    ):
+        lines = run(harness, f"ENC_LATCH_REPORT {int(commanded)} {int(reported)} "
+                             f"{int(observed)} {transitions} {mismatches}")
+        got = next(ln.split()[1] for ln in lines if ln.startswith("HEX "))
+        assert got == hexed(LatchReport(
+            commanded=commanded, reported=reported, observed=observed,
+            transitions=transitions, mismatches=mismatches,
+        ))
+
+    def test_the_firmware_decodes_a_request_the_model_encoded(self, harness):
+        lines = run(harness, f"FEED {hexed(LatchRequest(audit_ref=42, desired=LatchPosition.OPEN))}")
+        rx = next(ln for ln in lines if ln.startswith("RX LATCH_REQUEST"))
+        assert "ref=42" in rx
+        assert f"desired={int(LatchPosition.OPEN)}" in rx
+        assert "refused=0" in rx
+
+    def test_a_request_to_open_is_honoured(self, harness):
+        lines = run(
+            harness,
+            "LATCH_PERMIT",
+            f"FEED {hexed(LatchRequest(audit_ref=1, desired=LatchPosition.OPEN))}",
+            "LATCH_STATE",
+        )
+        assert latch_of(lines)["observed"] == "OPEN"
+
+    def test_a_request_to_close_is_honoured_when_no_override_stands(self, harness):
+        lines = run(
+            harness,
+            f"FEED {hexed(LatchRequest(audit_ref=1, desired=LatchPosition.CLOSED))}",
+            "LATCH_STATE",
+        )
+        assert latch_of(lines)["observed"] == "CLOSED"
+
+    def test_a_request_to_close_is_refused_while_overridden(self, harness):
+        """The asymmetry, in the port as well as in the model. Nothing on the
+        wire can talk an override down.
+
+        The LATCH_HALT stands in for the sketch's `drive_latch`, which opens
+        the contact on every pass while an override is latched. The harness
+        drives the state machine directly and does not run that loop.
+        """
+        lines = run(
+            harness,
+            "LATCH_PERMIT",
+            "BUTTON 1",
+            "LATCH_HALT",
+            f"FEED {hexed(LatchRequest(audit_ref=1, desired=LatchPosition.CLOSED))}",
+            "LATCH_STATE",
+        )
+        rx = next(ln for ln in lines if ln.startswith("RX LATCH_REQUEST"))
+        assert "refused=1" in rx
+        assert latch_of(lines)["observed"] == "OPEN"
+
+    def test_a_request_to_open_is_honoured_even_while_overridden(self, harness):
+        """More ways to stop are always safe."""
+        lines = run(
+            harness,
+            "BUTTON 1",
+            f"FEED {hexed(LatchRequest(audit_ref=1, desired=LatchPosition.OPEN))}",
+            "LATCH_STATE",
+        )
+        rx = next(ln for ln in lines if ln.startswith("RX LATCH_REQUEST"))
+        assert "refused=0" in rx
+        assert latch_of(lines)["observed"] == "OPEN"
+
+    def test_every_request_draws_a_report_the_model_can_decode(self, harness):
+        lines = run(harness, f"FEED {hexed(LatchRequest(audit_ref=9, desired=LatchPosition.OPEN))}")
+        rx = next(ln for ln in lines if ln.startswith("RX LATCH_REQUEST"))
+        report_hex = rx.split("report=")[1].split()[0]
+        report = decode(bytes.fromhex(report_hex))
+        assert isinstance(report, LatchReport)
+        assert report.observed is LatchPosition.OPEN
+
+    def test_the_report_carries_the_arbiter_counters(self, harness):
+        lines = run(
+            harness, "LATCH_PERMIT", "LATCH_HALT",
+            f"FEED {hexed(LatchRequest(audit_ref=1, desired=LatchPosition.CLOSED))}",
+        )
+        rx = next(ln for ln in lines if ln.startswith("RX LATCH_REQUEST"))
+        report = decode(bytes.fromhex(rx.split("report=")[1].split()[0]))
+        assert report.transitions == 3      # permit, halt, permit
+        assert report.mismatches == 0
+
 
 def latch_of(lines: list[str]) -> dict[str, str]:
     """Parse the last LATCH line into a dict."""
