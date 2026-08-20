@@ -1,6 +1,8 @@
 # State of Play
 
-**governed-edge-ai, as at 19 August 2026, tag `v3.0.0`.**
+**governed-edge-ai, as at 19 August 2026, release `v3.0.0`.**
+
+Written just after that release. No code has changed since, so every figure below still describes `v3.0.0`.
 
 A source of truth for anyone writing about this project: the website, a talk, a deck, a post. It states what is true today, what is designed but not built, what has not been tested, and which older claims are now false. It prescribes no wording and no markup.
 
@@ -14,9 +16,9 @@ An open-source demonstrator showing that AI governance controls can be enforced 
 
 ---
 
-## The three claims the project actually makes
+## The four claims the project actually makes
 
-Written as claims because each one is checkable, and each has a test that names it.
+`docs/architecture.md` calls these invariants A to D. Written here as claims, because each one is checkable and each has a test that names it.
 
 **Log before act.** The audit reference is a database row id obtained before any command frame is transmitted. The structure prevents the alternative: the send sits inside the block that follows the log call, and the robot's own firmware rejects any command that does not carry a reference.
 
@@ -24,25 +26,29 @@ Written as claims because each one is checkable, and each has a test that names 
 
 **Enforcement outlives its enforcer.** The stop is a bistable relay contact in the robot's motor supply. It holds position with no current at all, so cutting power to the board that opened it does not restore motor power, and it needs no cooperation from the robot because the robot has no pin to read.
 
-The third is new at v3.0.0 and it is the one with a story attached. See *How the current design was arrived at*.
+**Oversight is not revocable by its subject.** The override latches at the arbiter and no message on any link releases it: the protocol contains no such message, and the test suite proves it by throwing the entire outbound vocabulary at a latched node. Releasing an override is a physical act at the board. The governance tier may ask for the contact to be opened, which is always honoured, and asking for it to be closed is refused outright while an override stands.
+
+The third is new at `v3.0.0`, and it is the one with a story attached. See *How the current design was arrived at*.
 
 ---
 
 ## Hardware
 
-| Board | Single job | Decides? | Enforces? | Status |
+**No board has been powered on.** The status column below is about code, not hardware. Everything marked written is complete and passes its tests against software models of the boards; none of it has met a board. Do not let this table imply a working rig.
+
+| Board | Single job | Decides? | Enforces? | Code status |
 |---|---|---|---|---|
-| Arduino UNO Q 4GB | Witness: an independent second observation, whose disagreement forces a HALT | no | no | Running perception today; the witness role is build step 16 |
-| Arduino VENTUNO Q | Decision path, explicitly revocable: perception, governance filter, audit journal | yes | no | Running |
-| Arduino Alvik | Governed body: executes, and refuses any command without a valid audit reference | no | itself only | Running |
-| Arduino UNO R4 WiFi | Safety arbiter: relay, override button, annunciator, off-host digest witness | no | **yes** | Running |
-| Arduino Nesso N1 | Out-of-band operator console | no | via signed lift | **Designed, no firmware.** Build step 13. |
+| Arduino UNO Q 4GB | Witness: an independent second observation, whose disagreement forces a HALT | no | no | Perception service written. The witness role itself is build step 16, not written. |
+| Arduino VENTUNO Q | Decision path, explicitly revocable: perception, governance filter, audit journal | yes | no | Written and tested |
+| Arduino Alvik | Governed body: executes, and refuses any command without a valid audit reference | no | itself only | Written and tested |
+| Arduino UNO R4 WiFi | Safety arbiter: relay, override button, annunciator, off-host digest witness | no | **yes** | Written and tested. The hardware glue is the one part no test can drive. |
+| Arduino Nesso N1 | Out-of-band operator console | no | via signed lift | **Nothing written.** Build step 13. |
 
 **The organising rule: no board both decides and enforces.** That is checkable by looking at the wiring rather than by reading a policy.
 
 On the arbiter's own I2C bus, deliberately not the deciding host's: a Modulino Latch Relay whose contact sits in the motor supply, plus Distance and Movement modules for evidence outside the vision pipeline (build step 15, not yet built).
 
-**Cameras:** Arducam IMX219 8 MP, two of them, splayed for roughly 120 degrees of coverage.
+**Cameras:** Arducam IMX219 8 MP, two of them. Each has a 62.2 degree horizontal field of view, and the decided arrangement is 52 degrees between the optical axes, giving about 114 degrees of coverage with about 10 degrees of overlap in the middle. Some earlier material rounds this to "roughly 120 degrees"; 114 is the figure the decision was actually taken on. The splay is a calibrated parameter, because the safety envelope is defined by it and a mount that shifts is a control that drifts silently.
 
 ---
 
@@ -58,10 +64,10 @@ On the arbiter's own I2C bus, deliberately not the deciding host's: a Modulino L
 | Static analysis | ruff, mypy strict, bandit, pip-audit, all clean |
 | Hardware needed to run the suite | None |
 | Code licence | Apache 2.0 |
-| Hardware design files | CERN OHL-P v2 |
+| Hardware design files | CERN OHL-P v2, when there are any. None exist yet. |
 | Documentation | CC BY 4.0 |
 
-The full suite runs with no physical hardware. The test doubles are real implementations of the state machines driven over pseudo-terminals, so the path exercised in CI is the one that runs on the rig.
+The full suite runs with no physical hardware. The test doubles are real implementations of the state machines driven over pseudo-terminals rather than stubs, so the path exercised in CI is the one that would run on a rig. That is a stronger claim than mocking allows, and a weaker one than having run it.
 
 ---
 
@@ -69,9 +75,9 @@ The full suite runs with no physical hardware. The test doubles are real impleme
 
 Worth telling, because the project's credibility rests on it rather than on the feature list.
 
-The physical stop used to be a signal wire from the arbiter into a pin on the robot. It had two faults.
+The physical stop used to be a signal wire from the arbiter into a pin on the robot. It had two faults. Both were found by reasoning about the design rather than by watching it fail, since no board has been energised.
 
-It **released when the arbiter lost power**. A safety control that stops enforcing the moment its own board dies is not a safety control.
+It **would release when the arbiter lost power**. A driven line goes low when its board dies, so a power failure at the supervisor would un-isolate the motors. A safety control that stops enforcing the moment its own board dies is not a safety control.
 
 It **needed the governed component's cooperation**. It worked only because the robot's firmware chose to read that pin. Reflash the robot and the control evaporates. That is a governance module bolted onto the thing it is meant to govern, which breaks the project's own design rule.
 
@@ -136,7 +142,7 @@ That last point is the one most likely to be softened by accident. The right reg
 | Document | Contents |
 |---|---|
 | `README.md` | The project and its argument, in short |
-| `docs/architecture.md` | Full specification, v3.0. Section 12 lists every untested hardware claim. |
+| `docs/architecture.md` | Full specification, v3.0. Section 12 is the threat model, and its last part is what is not tested at all. |
 | `docs/architecture-reconciliation.md` | Why five boards, the delta register, the decisions taken |
 | `docs/deployment-guide.md` | Bare metal to a verified rig, v2.0, for a reader with no embedded experience |
 | `docs/governance-mapping.md` | Control objectives mapped to implementation, with the honest limits |
