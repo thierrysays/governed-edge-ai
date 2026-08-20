@@ -59,8 +59,8 @@ Perception    -->  Governance         -->   Robot body
 ```
 
 **The fifth board is the Nesso N1**, the out-of-band operator console. It is in
-`docs/architecture.md` and in the bill of materials because the design depends
-on it, and it is build step 13, which is not written. Nothing in this guide
+`docs/architecture.md` and in Part 1 below because the design depends on it,
+and it is build step 13, which is not written. Nothing in this guide
 needs it. Buy it when the step lands, not before.
 
 ### Why a relay and not a wire
@@ -1300,6 +1300,7 @@ make qa          # all of the above
 | `docs/governance-mapping.md` | Control objectives mapped to implementation |
 | `r4-supervisor/README.md` | The oversight node in detail |
 | `docs/build-log.md` | Decisions taken, and why |
+| `docs/state-of-play.md` | Where the project stands, and what is not true any more |
 
 If something in this guide is wrong or incomplete, that is worth an issue on
 the repository. A deployment guide only earns its place by being tried.

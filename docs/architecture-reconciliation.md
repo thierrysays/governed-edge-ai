@@ -248,7 +248,7 @@ Classes: **A** load-bearing · **B** substantive but contained · **C** document
 
 ### 7.1 Cameras: sourced, and what the specification implies
 
-The camera is settled: the [Kubii 8 MP module for Raspberry Pi](https://www.kubii.com/fr/cameras-capteurs/3610-module-camera-8mp-pour-raspberry-pi-3272496309692.html) (EAN 3272496309692), an **Arducam IMX219**, two of them, matching the diagram's *IMX219 ×2*. That closes the longest-running open item in the project: `docs/build-log.md` has listed the camera as unsourced since the first commit and `docs/cowork-bom-arduino.md` still calls it the most critical unknown. Both need correcting.
+The camera is settled: the [Kubii 8 MP module for Raspberry Pi](https://www.kubii.com/fr/cameras-capteurs/3610-module-camera-8mp-pour-raspberry-pi-3272496309692.html) (EAN 3272496309692), an **Arducam IMX219**, two of them, matching the diagram's *IMX219 ×2*. That closes the longest-running open item in the project: `docs/build-log.md` had listed the camera as unsourced since the first commit, and the peripherals BOM still called it the most critical unknown.
 
 **The ribbon question is closed.** The module ships with both cables: 15 cm CSI 15-pin to 22-pin (Pi 3/4) and 15 cm CSI 22-pin to 22-pin (Pi Zero, Pi 5). Whichever connector the VENTUNO Q presents, a cable is in the box.
 
