@@ -155,16 +155,17 @@ That last point is the one most likely to be softened by accident. The right reg
 
 ## The two sibling repositories
 
-Added 21 August 2026. Neither is published yet, so no URL is given here — this
-section gets links when the repositories exist, and not before.
+Added 21 August 2026, and both published the same day. CI is green on both:
+113 tests and 110 tests, and in each case a job that runs the demonstration
+rather than only the suite.
 
 Two further repositories were built alongside this one. They share an author, a
 licence, a regulatory frame and, in one case, the same five boards. They share
 no code and no history with this repository, and no source path collides with
 one here.
 
-**`edge-ai-refusal-runtime`** — the software runtime for the argument this rig
-makes in hardware. A pip-installable Python package with five controls in a
+**[`edge-ai-refusal-runtime`](https://github.com/thierrysays/edge-ai-refusal-runtime)**
+— the software runtime for the argument this rig makes in hardware. A pip-installable Python package with five controls in a
 fixed order: admission gate, inference journal, default-deny policy, stop
 channel, budgets. Simulation-first: the controls were written, tested and
 deliberately broken before any board was on a bench. `v0.1.0`, 113 tests, and
@@ -176,7 +177,8 @@ project yielded. Its schema identifiers still read `governed-edge-ai/...`
 because they are inside hashed records and signed payloads and cannot move
 without invalidating them; its ADR 0010 explains that at length.
 
-**`cra-in-a-box`** — the Cyber Resilience Act chain end to end and offline:
+**[`cra-in-a-box`](https://github.com/thierrysays/cra-in-a-box)** — the Cyber
+Resilience Act chain end to end and offline:
 SBOM, VEX, scan, Article 14 reporting, signed update, Annex VII pack. `v0.1.0`,
 110 tests. Nothing to do with this rig beyond the author.
 
