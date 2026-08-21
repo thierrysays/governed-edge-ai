@@ -153,6 +153,68 @@ That last point is the one most likely to be softened by accident. The right reg
 
 ---
 
+## The two sibling repositories
+
+Added 21 August 2026. Neither is published yet, so no URL is given here — this
+section gets links when the repositories exist, and not before.
+
+Two further repositories were built alongside this one. They share an author, a
+licence, a regulatory frame and, in one case, the same five boards. They share
+no code and no history with this repository, and no source path collides with
+one here.
+
+**`edge-ai-refusal-runtime`** — the software runtime for the argument this rig
+makes in hardware. A pip-installable Python package with five controls in a
+fixed order: admission gate, inference journal, default-deny policy, stop
+channel, budgets. Simulation-first: the controls were written, tested and
+deliberately broken before any board was on a bench. `v0.1.0`, 113 tests, and
+its demonstration counts what it refused rather than what it did.
+
+It was going to be called `governed-edge-ai`. This repository already had that
+name, is at `v3.0.0`, and carries it in its release history, so the newer
+project yielded. Its schema identifiers still read `governed-edge-ai/...`
+because they are inside hashed records and signed payloads and cannot move
+without invalidating them; its ADR 0010 explains that at length.
+
+**`cra-in-a-box`** — the Cyber Resilience Act chain end to end and offline:
+SBOM, VEX, scan, Article 14 reporting, signed update, Annex VII pack. `v0.1.0`,
+110 tests. Nothing to do with this rig beyond the author.
+
+### What is genuinely shared, and what is not
+
+The runtime and this repository are complementary rather than duplicative, and
+the overlap is worth naming precisely because it is small.
+
+| | this repository | `edge-ai-refusal-runtime` |
+|---|---|---|
+| Journal | SQLite + SHA-256 chain, witnessed off-host, **unkeyed** — signing is build step 14 | JSONL chain, Merkle checkpoints, Ed25519, independent verifier that shares no state with the writer |
+| Stop | bistable relay contact, physical, survives its own board's death | a simulated relay that starts engaged |
+| Policy | a confidence threshold at 0.70, in code | default-deny rule engine, rules as JSON data |
+| Admission gate, budgets, Article 50 marking | none | all three |
+| Hardware | five boards, none powered on | none, and it says so |
+
+Each has something the other has designed and not built. Build step 14 here —
+signing the audit chain — is implemented there. Its first milestone there —
+porting a stop channel to a Modulino Latch Relay — is designed here in detail,
+including the power-loss fault and the cut-harness fault that this project found
+by reasoning rather than by testing.
+
+### One thing not to misread
+
+Its `hal/devices.py` gives the UNO Q and the VENTUNO Q all five controls,
+including both policy mediation and a stop channel on the same board. Read as a
+role assignment that contradicts this repository's organising rule, which is
+that no board both decides and enforces.
+
+It is not a role assignment. `available_controls` records what a board *can*
+enforce, which is the only question its admission gate asks; it says nothing
+about what job a board holds in a rig. This repository answers that second
+question, for one particular rig, and answers it more strictly. Both are true at
+once. The distinction is now stated in that file, in its project instructions,
+and here.
+
+---
+
 ## Where the detail lives
 
 | Document | Contents |
