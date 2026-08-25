@@ -32,7 +32,7 @@ linux-stack/
   ipc/              Binary IPC codec and MockSTM32H5
   governance/       GovernanceFilter and the VENTUNO Q service entry point
   oversight/        Attestation chain, SupervisorLink, MockR4Supervisor
-  tests/            512 tests, 100% line coverage, hardware-free
+  tests/            638 tests, 100% line coverage, hardware-free
   requirements.txt
 ```
 

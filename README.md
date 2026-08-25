@@ -163,17 +163,19 @@ governed-edge-ai/
     ├── oversight/                 # Attestation chain, SupervisorLink, latch relay, MockR4Supervisor
     ├── requirements.txt
     ├── pyproject.toml
-    └── tests/                     # 634 tests
+    └── tests/                     # 638 tests
 ```
 
 ## QA baseline
 
-733 tests across two modules · 100% line coverage on both · ruff clean · mypy strict clean · bandit clean · pip-audit clean
+737 tests across two modules · 100% line coverage on both · ruff clean · mypy strict clean · bandit clean · pip-audit clean
 
 | Module | Tests | Coverage |
 |---|---|---|
-| linux-stack | 634 | 100% |
+| linux-stack | 638 | 100% |
 | audit-service | 99 | 100% |
+
+`.github/workflows/qa.yml` runs `make qa` on every pull request and on every push to `main`. It is the same gate a contributor runs locally, on a runner with no hardware attached.
 
 ```bash
 make qa        # lint + typecheck + security + full test suite

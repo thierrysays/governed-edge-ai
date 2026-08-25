@@ -59,7 +59,7 @@ On the arbiter's own I2C bus, deliberately not the deciding host's: a Modulino L
 | Current release | `v3.0.0`, "the latch relay" |
 | Build steps shipped | 11 |
 | Build steps designed but not built | 6 (steps 12 to 17) |
-| Tests | 733 across two modules |
+| Tests | 737 across two modules |
 | Line coverage | 100% on both, gate set at 98% |
 | Static analysis | ruff, mypy strict, bandit, pip-audit, all clean |
 | Hardware needed to run the suite | None |
@@ -95,8 +95,8 @@ Older material states these. All are now false.
 |---|---|
 | Three boards | Five |
 | Four boards | Five |
-| 241 tests, 95.76% coverage | 733 tests, 100% line coverage |
-| 611 or 703 tests | 733. The 611 figure is still usable when the point is that those tests missed the power-loss fault. |
+| 241 tests, 95.76% coverage | 737 tests, 100% line coverage |
+| 611, 703 or 733 tests | 737. The 611 figure is still usable when the point is that those tests missed the power-loss fault. |
 | Eight build steps | Eleven shipped |
 | A hardware kill switch on the robot | A bistable relay contact in the motor supply, held by a board that is not on the command chain |
 | MIT licence | Apache 2.0 |

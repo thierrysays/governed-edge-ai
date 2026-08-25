@@ -28,7 +28,8 @@ Read Part 0 before buying or wiring anything.
 - [Part 9: First full run](#part-9-first-full-run)
 - [Part 10: Verify the governance controls](#part-10-verify-the-governance-controls)
 - [Part 11: Run it as a service](#part-11-run-it-as-a-service)
-- [Part 12: Troubleshooting](#part-12-troubleshooting)
+- [Part 12: Segment the network](#part-12-segment-the-network)
+- [Part 13: Troubleshooting](#part-13-troubleshooting)
 - [Appendix A: Command reference](#appendix-a-command-reference)
 - [Appendix B: Glossary](#appendix-b-glossary)
 
@@ -92,7 +93,7 @@ not expect it to.
 2. **Know where the override button is** before you power anything on. Put it
    somewhere you can hit without looking.
 3. **Never bridge the relay contact to make a demo work.** If the wheels are
-   not turning, the system is telling you something true. Read Part 12 rather
+   not turning, the system is telling you something true. Read Part 13 rather
    than shorting the two motor-supply terminals together.
 4. **The relay is a switch, not a fuse.** It interrupts the motor supply. It
    does nothing about the battery, which is still connected and can still
@@ -234,10 +235,10 @@ suite. It takes about a minute. You should see, at the end of each module:
 
 ```
 Required test coverage of 98% reached. Total coverage: 100.00%
-634 passed
+638 passed
 ```
 
-and 99 passed for the audit service, 733 in total.
+and 99 passed for the audit service, 737 in total.
 
 If `make qa` passes, your software is sound and any later problem is hardware
 or wiring. That is worth the minute.
@@ -794,7 +795,7 @@ Substitute your two device paths.
 the first heartbeat lands, and you should hear it. The matrix stays on
 WATCHING. If it switches to STALE, the heartbeat is not arriving; if it switches
 to the split bars, the contact did not go where it was told or cannot be
-observed. Both are in Part 12.
+observed. Both are in Part 13.
 
 ### 9.4 Start the perception service
 
@@ -851,7 +852,7 @@ Every row after the press should show `command_sent = 0` and a note containing
 `OPERATOR_BUTTON`. The system is still recording everything it sees. It has
 stopped acting on it.
 
-**If the wheels do not stop, stop the demonstration and go to Part 12.**
+**If the wheels do not stop, stop the demonstration and go to Part 13.**
 
 ### Test 2: the override latches
 
@@ -1065,11 +1066,209 @@ WantedBy=multi-user.target
 ```
 
 The dashboard is read-only and unauthenticated, on the assumption that your LAN
-is the boundary. Do not port-forward it to the internet.
+is the boundary. Do not port-forward it to the internet. Part 12 replaces that
+assumption with a rule, for installations that need one.
 
 ---
 
-## Part 12: Troubleshooting
+## Part 12: Segment the network
+
+Optional. Everything up to here runs on a flat network, and for a bench rig
+that is the right answer. This part is for an installation that stays up: a
+permanent demonstrator, a site deployment, anything an auditor might be shown.
+
+It exists for one reason. The project claims that audit evidence lives outside
+the host that produces it, and today that claim rests on 64 digests retained in
+the R4's SRAM and on the discipline of whoever runs the rig. A firewall can
+express the same claim a second way, independently: **the governance host has
+no route to its own archive.** It can still rewrite its local SQLite log. It
+cannot reach the place where its earlier digests are kept.
+
+That is the reasoning behind the latch relay, moved onto the network. A
+prohibition that survives the compromise of the thing it constrains.
+
+### 12.1 What you need
+
+Any router with four physical Ethernet ports and a firewall you can write rules
+for: OPNsense, pfSense, VyOS, or plain nftables on Debian. The reference build
+for this guide is a fanless Alder Lake-N appliance with four Intel I226-V
+2.5 GbE ports, an M.2 cellular modem for uplink failover, and a TPM. None of
+that is required. Four ports and default-deny are required.
+
+8 GB of RAM is enough for routing, NAT and a VPN. Add memory before you add an
+inline IDS.
+
+The decision segment carries two hosts, so it also needs a small unmanaged
+switch.
+
+**Use the physical ports, not VLANs on a trunk.** The hardware supports 802.1Q
+and you should not use it here. Four functions, four ports: a physical segment
+does not end up inside another one because of a mistyped tag, and the topology
+can be verified by following a cable with your finger. This is a governance
+argument rather than a technical constraint, and it is the kind that survives
+staff turnover.
+
+### 12.2 Port assignment
+
+| Port | Segment | Subnet | Occupants |
+|---|---|---|---|
+| `igc0` | WAN | site DHCP | Uplink; automatic failover to the cellular modem |
+| `igc1` | DECISION | 10.42.10.0/24 | VENTUNO Q `.10`, UNO Q `.20`, via the switch |
+| `igc2` | CONSOLE | 10.42.20.0/24 | Wi-Fi access point for the Nesso N1 |
+| `igc3` | EVIDENCE | 10.42.30.0/24 | Archive node, dashboard reader, admin workstation |
+
+Give both nodes static leases. Device paths shuffle and so do DHCP addresses,
+and the perception service is started with the VENTUNO Q's address on its
+command line.
+
+**Neither the R4 nor the Alvik appears in this table.** They are on USB serial
+to the VENTUNO Q. That is what makes this plan acceptable: the oversight path
+never traverses the router, so the router never becomes a common-mode failure
+with the function it would otherwise carry. If the R4's optional Wi-Fi console
+is ever enabled, it belongs on CONSOLE, and 12.5 explains why.
+
+### 12.3 The flow matrix
+
+Default deny in both directions. Log every denial.
+
+| Source | Destination | Service | What the rule carries |
+|---|---|---|---|
+| UNO Q | VENTUNO Q `.10` | TCP 9100 | Perception frames. The only flow on the decision chain. |
+| VENTUNO Q | Nesso (CONSOLE) | build step 13 | Verdict stream out |
+| Nesso | VENTUNO Q `.10` | build step 13 | Signed HALT lift, inbound |
+| EVIDENCE | VENTUNO Q `.10` | TCP 8000 | Dashboard, read-only by construction |
+| EVIDENCE | VENTUNO Q `.10` | TCP 22 | Digest collection, pull only |
+| DECISION | `igc1` gateway | UDP 123 | Local NTP. See 12.4. |
+| **DECISION** | **EVIDENCE** | **any** | **Denied. This is the rule that carries the argument.** |
+| DECISION | WAN | any | Denied. No silent model update, no exfiltration. |
+| CONSOLE | WAN, EVIDENCE | any | Denied. The Nesso speaks only to the VENTUNO Q. |
+| EVIDENCE | WAN | HTTP/S, DNS, NTP | Administration and updates |
+
+The two Nesso ports are left unspecified because build step 13 is not written.
+Fix them when it is, and add them here rather than opening the segment.
+
+### 12.4 Time, which the audit log depends on
+
+A segment with no route out has no route to a time server, and an audit log
+with drifting timestamps is a weaker artefact than one without. Run NTP on the
+router and serve it on `igc1`. The decision segment gets a coherent, local,
+attributable time source without gaining a path to anything else.
+
+If the installation needs traceable time, discipline the router's clock from
+the cellular modem's GNSS where the module provides one, and record in the
+commissioning notes which source was used.
+
+### 12.5 The three rules that are governance
+
+The rest of the matrix is hygiene. These three can be defended to an auditor,
+and each maps to a control objective already claimed in the README.
+
+**The evidence asymmetry.** EVIDENCE initiates towards DECISION; DECISION never
+initiates towards EVIDENCE. The archive node pulls, it does not receive. A
+compromised VENTUNO Q has no network path to the archive of its own past
+digests. *Off-host tamper evidence, ISO 42001 Clause 9.1.*
+
+**The decision segment is mute outward.** Neither the NPU nor the perception
+stack needs the internet while running. Updating a model becomes an explicit
+act with a temporary rule opened and closed again, which means it leaves a
+trace. *Model supply chain integrity.*
+
+**A future R4 console lives on CONSOLE, never on DECISION.** The architecture
+calls the arbiter's optional Wi-Fi console the least satisfying part of the
+design, and it is right: it is a network surface on the supervisor. If it is
+ever enabled, the firewall must guarantee that the governance host cannot reach
+it. A supervisor reachable by the thing it supervises has stopped being a
+supervisor. *Independent oversight function, Clause 9.2.*
+
+### 12.6 Verify the segmentation
+
+Three more tests, in the spirit of Part 10. An untested rule is a claim.
+
+#### Test 10: losing the decision segment stops the robot
+
+1. Everything running, commands flowing, the contact closed.
+2. **Unplug the cable between the UNO Q and `igc1`.** The governance service
+   stays up. Only its supply of perception frames is gone.
+3. Within 2 seconds the matrix switches to **STALE** and the contact opens.
+4. Plug it back in. The R4 stays in STALE and needs the clear button.
+
+This looks like Test 4 and is a different failure. Test 4 kills the governance
+process. This one leaves it running and blinds it, which is the failure a
+network introduces and the one an operator is most likely to cause by accident.
+
+It works because `SupervisorLink.record()` emits the heartbeat, and `record()`
+is called once per logged event. No frames means no records, which means no
+heartbeat, which means the arbiter stops being reassured. **The heartbeat is a
+side effect of governing.** A governance tier that has stopped governing stops
+saying it is fine, without anyone having written a watchdog to make that true.
+
+> **Do not add a background heartbeat thread.** It is the obvious way to make
+> the oversight link look more robust, and it would keep the arbiter reassured
+> while the governance tier sat blind. This test is what stands between the
+> current behaviour and that regression. The unit tests do not close the gap:
+> `test_record_emits_digest_then_heartbeat` proves that recording sends a
+> heartbeat, and `test_mock_supervisor` proves the node latches on silence.
+> Nothing yet proves this side falls silent when it stops recording.
+
+#### Test 11: the governance host cannot reach the archive
+
+1. On the VENTUNO Q:
+
+```bash
+nc -zv 10.42.30.20 22
+```
+
+It must fail. A refusal is acceptable; a timeout is better, since it tells a
+prospective attacker less.
+
+2. On the archive node, the other direction:
+
+```bash
+nc -zv 10.42.10.10 8000
+```
+
+It must succeed.
+
+3. Confirm the firewall logged the denial in step 1.
+
+A denial that leaves no record is half a control. The log entry is what turns
+"it did not get through" into evidence that it tried.
+
+#### Test 12: the console segment is not a safety dependency
+
+1. Power down the access point, or unplug `igc2`.
+2. Press the override button. The contact opens and the wheels stop.
+3. Press clear. The override lifts.
+
+Nothing on the safety path needed the console. The signed HALT lift is a
+convenience over a link that can fail; the ARM button is the path that cannot.
+Run this test again after build step 13 lands, when there is finally something
+on that segment to lose.
+
+### 12.7 What this part does not prove
+
+Segmentation does not stop a compromised VENTUNO Q from rewriting its own
+database between two reconciliations. It shortens the window. The digests
+retained on the R4 remain the evidence, and this changes nothing about that.
+
+An operator with physical access reconfigures the firewall. The TPM and the
+Kensington lock raise the cost; they do not answer the objection. Treat the
+firewall's configuration as an auditable artefact, keep it in version control,
+and review its diff the way you would review a change to the governance filter.
+
+The router is a single component and it is deliberately not watching anything.
+If it dies, the decision segment goes with it and Test 10 describes what
+happens next. That is the correct amount of authority for a component nobody
+audited.
+
+And the cellular failover keeps the installation reachable, which is a
+convenience for the operator and an additional surface for everyone else. On a
+demonstrator it earns its place. On anything carrying real consequence, decide
+deliberately, and write down who decided.
+
+---
+
+## Part 13: Troubleshooting
 
 ### Nothing appears at `/dev/ttyACM*`
 
@@ -1267,6 +1466,7 @@ make qa          # all of the above
 | **Bare metal** | Starting from an unconfigured machine, no assumptions. |
 | **Confidence gate** | A minimum model confidence, enforced separately by the governance node and the robot. |
 | **CRC** | A checksum that detects corrupted messages on a serial link. |
+| **Default deny** | A firewall posture where nothing is allowed unless a rule allows it. The opposite posture allows anything not explicitly refused. |
 | **Fail closed** | When something breaks, stop. The opposite, fail open, keeps running. |
 | **Flash** | Write firmware onto a microcontroller. |
 | **GPIO** | A pin that can be read or driven high or low. |
@@ -1282,6 +1482,7 @@ make qa          # all of the above
 | **Oversight node** | The UNO R4 WiFi. Watches the governance tier and can stop it. |
 | **Qwiic** | A four-wire connector carrying I2C, 3.3 V and ground. Only fits one way. |
 | **pty** | A pseudo-terminal: a software object that behaves like a serial port. Used by the mocks. |
+| **Segment** | A separate network with its own port and its own rules. Here, one physical port per function, so that a mistyped tag cannot merge two of them. |
 | **Suppression** | A detection that was logged but produced no command. Deliberate, and on record. |
 | **udev rule** | A Linux rule giving a device a stable name. |
 | **Virtual environment** | A private set of Python packages for one project. |
