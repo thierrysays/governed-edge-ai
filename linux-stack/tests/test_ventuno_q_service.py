@@ -11,9 +11,19 @@ import threading
 import time
 from unittest.mock import MagicMock, patch
 
+from logger import AuditLogger
+
+from governance.filter import GovernanceFilter
 from governance.ventuno_q_service import GovernanceService
+from ipc.codec import OverrideReason
+from ipc.mock_peer import MockSTM32H5
+from oversight.mock_supervisor import MockR4Supervisor
+from oversight.supervisor_link import SupervisorLink
 from perception.base import DetectionResult
-from perception.network import DetectionResultServer
+from perception.network import DetectionResultClient, DetectionResultServer
+
+SETTLE_S = 0.15
+SILENCE_TIMEOUT_MS = 200.0
 
 
 def _free_port() -> int:
@@ -119,3 +129,84 @@ class TestGovernanceServiceE2E:
                 srv_inst.start = MagicMock()
                 result = main(["--alvik", "mock", "--db", ":memory:"])
         assert result == 0
+
+
+# ---------------------------------------------------------------------------
+# Silence at the service level
+# ---------------------------------------------------------------------------
+
+class TestBlindServiceFallsSilent:
+    """
+    A running service with nothing to govern must stop reassuring the arbiter.
+
+    TestSilenceWhenNotGoverning in test_supervisor_link.py proves the link
+    emits nothing when record() is not called. This proves the consequence one
+    level up, where the failure actually happens: the service still running,
+    its socket still open, blocked in frames() with no perception arriving.
+    That is the failure a network introduces, and the one Part 10's Test 4 does
+    not cover, because Test 4 stops the process instead of blinding it.
+
+    Nothing here is arranged to make the system fall closed. The service is
+    left alone and the arbiter reaches the conclusion by itself, from silence.
+    """
+
+    def test_an_idle_perception_link_latches_the_arbiter(self, tmp_path):
+        audit_logger = AuditLogger(tmp_path / "audit.db")
+        session_id = audit_logger.open_session(board_serial="RIG")
+
+        peer = MockSTM32H5(watchdog_ms=10_000.0).start()
+        actuation = open(peer.device, "rb+", buffering=0)
+
+        node = MockR4Supervisor(heartbeat_timeout_ms=SILENCE_TIMEOUT_MS).start()
+        oversight = open(node.device, "rb+", buffering=0)
+        link = SupervisorLink(oversight, heartbeat_interval_s=0.0)
+
+        gf = GovernanceFilter(
+            logger=audit_logger,
+            session_id=session_id,
+            channel=actuation,
+            response_timeout_s=0.5,
+            supervisor=link,
+        )
+
+        port = _free_port()
+        server = DetectionResultServer(host="127.0.0.1", port=port)
+        server.start()
+        service = GovernanceService(server=server, gf=gf)
+        thread = threading.Thread(target=service.run, daemon=True)
+        thread.start()
+
+        client = None
+        try:
+            time.sleep(0.05)
+            client = DetectionResultClient(host="127.0.0.1", port=port)
+            client.send([_make_detection("person")])
+            time.sleep(SETTLE_S)
+
+            # It governed once. The digest was witnessed and the heartbeat
+            # that followed it released the contact.
+            heard = node.stats.heartbeats_received
+            assert heard >= 1
+            assert node.stats.digests_received >= 1
+            assert node.override_active is False
+            assert node.motor_power_cut is False
+
+            # The perception link goes quiet here. Nothing else changes: the
+            # service is up, the socket is open, the oversight cable is intact.
+            time.sleep(3 * SILENCE_TIMEOUT_MS / 1000.0)
+
+            assert node.stats.heartbeats_received == heard
+            assert node.override_active is True
+            assert node.override_reason is OverrideReason.GOVERNANCE_HEARTBEAT_LOST
+            assert node.motor_power_cut is True
+        finally:
+            service.stop()
+            if client is not None:
+                client.close()
+            server.close()
+            thread.join(timeout=1.0)
+            link.close()
+            node.stop()
+            actuation.close()
+            peer.stop()
+            audit_logger.close()
