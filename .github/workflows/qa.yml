@@ -1,0 +1,47 @@
+name: QA
+
+# Runs the same gate a contributor runs locally: `make qa` is lint, typecheck,
+# security and the full test suite across both Python modules. Nothing here is
+# a CI-only check, so a green run means the repository rule held.
+#
+# The suite needs no hardware. It does need a C++ compiler: the R4 firmware
+# parity harness compiles the real sketch and runs it against the Python
+# reference model. ubuntu-latest ships g++, so there is nothing to install.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qa-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: |
+            linux-stack/requirements.txt
+            audit-service/requirements.txt
+
+      - name: Install both modules' dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r linux-stack/requirements.txt
+          python -m pip install -r audit-service/requirements.txt
+
+      - name: make qa
+        run: make qa

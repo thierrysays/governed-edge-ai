@@ -175,6 +175,8 @@ governed-edge-ai/
 | linux-stack | 638 | 100% |
 | audit-service | 99 | 100% |
 
+`.github/workflows/qa.yml` runs `make qa` on every pull request and on every push to `main`. It is the same gate a contributor runs locally, on a runner with no hardware attached.
+
 ```bash
 make qa        # lint + typecheck + security + full test suite
 make smoke     # fast sanity pass, hardware-free
