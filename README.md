@@ -163,16 +163,16 @@ governed-edge-ai/
     ├── oversight/                 # Attestation chain, SupervisorLink, latch relay, MockR4Supervisor
     ├── requirements.txt
     ├── pyproject.toml
-    └── tests/                     # 634 tests
+    └── tests/                     # 638 tests
 ```
 
 ## QA baseline
 
-733 tests across two modules · 100% line coverage on both · ruff clean · mypy strict clean · bandit clean · pip-audit clean
+737 tests across two modules · 100% line coverage on both · ruff clean · mypy strict clean · bandit clean · pip-audit clean
 
 | Module | Tests | Coverage |
 |---|---|---|
-| linux-stack | 634 | 100% |
+| linux-stack | 638 | 100% |
 | audit-service | 99 | 100% |
 
 ```bash

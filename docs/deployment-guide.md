@@ -235,10 +235,10 @@ suite. It takes about a minute. You should see, at the end of each module:
 
 ```
 Required test coverage of 98% reached. Total coverage: 100.00%
-634 passed
+638 passed
 ```
 
-and 99 passed for the audit service, 733 in total.
+and 99 passed for the audit service, 737 in total.
 
 If `make qa` passes, your software is sound and any later problem is hardware
 or wiring. That is worth the minute.
