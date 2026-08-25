@@ -401,3 +401,84 @@ class TestEmittedFrames:
         assert msgs[0].digest == AuditChain.from_rows([_row(1)]).head
         assert isinstance(msgs[1], SupervisorHeartbeat)
         assert msgs[1].commands_sent == 1
+
+
+# ---------------------------------------------------------------------------
+# Silence when not governing
+# ---------------------------------------------------------------------------
+
+def _emitted(fd: int) -> bytes:
+    """Everything readable on fd right now. Empty when the link said nothing."""
+    os.set_blocking(fd, False)
+    try:
+        return os.read(fd, 4096)
+    except BlockingIOError:
+        return b""
+
+
+class TestSilenceWhenNotGoverning:
+    """
+    The link must fall silent when the governance tier stops governing.
+
+    Nothing in SupervisorLink drives the heartbeat on a timer: record() emits
+    it, and record() is called once per logged event. So a tier that is still
+    running but has stopped receiving perception frames stops reassuring the
+    oversight node, which latches on the silence and opens the contact. That
+    is the whole of Test 10 in the deployment guide, and it holds by side
+    effect rather than by design.
+
+    These tests exist so that adding a background heartbeat thread breaks
+    something. Without them, that change would keep the arbiter reassured
+    while the tier sat blind, and every other test would still pass.
+    """
+
+    def test_no_heartbeat_before_the_first_record(self):
+        node_read, link_write = os.pipe()
+        link = SupervisorLink(
+            open(link_write, "wb", buffering=0), heartbeat_interval_s=0.0
+        )
+        try:
+            # A zero interval means a heartbeat is always due. Nothing calls
+            # for one, so none is sent, however long we wait.
+            time.sleep(SETTLE_S)
+            assert _emitted(node_read) == b""
+        finally:
+            link.close()
+            os.close(node_read)
+
+    def test_no_heartbeat_after_the_last_record(self):
+        node_read, link_write = os.pipe()
+        link = SupervisorLink(
+            open(link_write, "wb", buffering=0), heartbeat_interval_s=0.0
+        )
+        try:
+            link.record(_row(1), command_sent=True)
+            assert _emitted(node_read) != b""  # digest and heartbeat went out
+
+            # The perception link dies here. The service stays up.
+            time.sleep(SETTLE_S)
+            assert _emitted(node_read) == b""
+        finally:
+            link.close()
+            os.close(node_read)
+
+    def test_polling_does_not_reassure_the_node(self):
+        node_read, link_write = os.pipe()
+        link = SupervisorLink(
+            open(link_write, "wb", buffering=0),
+            heartbeat_interval_s=0.0,
+            link_timeout_s=0.05,
+        )
+        try:
+            time.sleep(SETTLE_S)
+            for _ in range(5):
+                link.poll()
+
+            # The link notices its own staleness and vetoes locally, and it
+            # still says nothing on the wire. Silence is what the node acts on.
+            assert link.override_active is True
+            assert link.override_reason is OverrideReason.GOVERNANCE_HEARTBEAT_LOST
+            assert _emitted(node_read) == b""
+        finally:
+            link.close()
+            os.close(node_read)
