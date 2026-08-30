@@ -29,6 +29,7 @@ from dashboard.models import (
     QueryResponse,
     SessionOut,
 )
+from observability import init_sentry
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -36,6 +37,8 @@ from dashboard.models import (
 
 _DEFAULT_DB = str(Path(__file__).parent.parent / "audit.db")
 DB_PATH: Path = Path(os.environ.get("AUDIT_DB_PATH", _DEFAULT_DB))
+
+init_sentry("audit-dashboard")
 
 
 # ---------------------------------------------------------------------------

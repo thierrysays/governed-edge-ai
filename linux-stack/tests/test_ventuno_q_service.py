@@ -130,6 +130,20 @@ class TestGovernanceServiceE2E:
                 result = main(["--alvik", "mock", "--db", ":memory:"])
         assert result == 0
 
+    def test_main_logs_when_sentry_enabled(self):
+        from governance.ventuno_q_service import main
+        with (
+            patch("governance.ventuno_q_service.init_sentry", return_value=True),
+            patch("governance.ventuno_q_service.GovernanceService") as MockSvc,
+            patch("governance.ventuno_q_service.DetectionResultServer") as MockSrv,
+        ):
+            inst = MockSvc.return_value
+            inst.run = MagicMock()
+            srv_inst = MockSrv.return_value
+            srv_inst.start = MagicMock()
+            result = main(["--alvik", "mock", "--db", ":memory:"])
+        assert result == 0
+
 
 # ---------------------------------------------------------------------------
 # Silence at the service level

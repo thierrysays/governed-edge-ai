@@ -28,6 +28,7 @@ from collections.abc import Sequence
 
 import numpy as np
 
+from observability import init_sentry
 from perception.base import DetectionResult, PerceptionPipeline
 from perception.capture import FrameSource, SyntheticFrameSource, V4L2FrameSource
 from perception.network import DetectionResultClient
@@ -151,6 +152,8 @@ def _build_backends() -> list[PerceptionPipeline]:
 
 def main(argv: Sequence[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    if init_sentry("uno-q-perception"):
+        log.info("Sentry error reporting enabled (SENTRY_DSN set).")
 
     parser = argparse.ArgumentParser(description="UNO Q 4GB perception service")
     parser.add_argument("--device", type=int, default=0,

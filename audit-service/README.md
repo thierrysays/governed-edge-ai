@@ -26,7 +26,20 @@ Append-only is a property of the writer, not of the bytes. Anyone who can reach 
 
 ## Dashboard
 
-A lightweight Python web service exposes the audit log to a browser dashboard over the local network (Wi-Fi 6). No outbound telemetry. No cloud relay.
+A lightweight Python web service exposes the audit log to a browser dashboard over the local network (Wi-Fi 6). No outbound telemetry by default. No cloud relay unless an operator opts in.
+
+## Error reporting (optional, off by default)
+
+`observability.py` wires the dashboard service to Sentry for exception tracking, but only if `SENTRY_DSN` is set in the environment. Unset, `init_sentry()` is a no-op and the service makes no outbound calls, preserving the claim above. To opt in:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `SENTRY_DSN` | unset (disabled) | Sentry project DSN. Setting this is what turns reporting on. |
+| `SENTRY_ENVIRONMENT` | `development` | Environment tag on reported events. |
+| `SENTRY_RELEASE` | unset | Release tag on reported events. |
+| `SENTRY_TRACES_SAMPLE_RATE` | `0.0` | Performance trace sampling; 0 means errors only. |
+
+`send_default_pii` is always forced off: this service handles governance audit data, and nothing about a caller beyond the exception itself should leave the LAN.
 
 ## Planned: LLM query interface
 
@@ -38,8 +51,9 @@ A local LLM running on the NPU side would allow natural-language queries over th
 audit-service/
   schema.sql          SQLite schema
   logger.py           Append-only write service, plus fetch_event() for attestation
+  observability.py    Optional, opt-in Sentry error reporting
   dashboard/          FastAPI read-only dashboard
-  tests/              99 tests, 100% line coverage
+  tests/              105 tests, 100% line coverage
   requirements.txt
 ```
 
