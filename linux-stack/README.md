@@ -24,6 +24,19 @@ Neither is an implementation detail to be optimised away. They are the governanc
 
 All inference runs locally via the Qualcomm AI Hub runtime. No cloud inference dependency at runtime. Edge Impulse is used at development and training time only and is not in the runtime path.
 
+## Error reporting (optional, off by default)
+
+`observability.py` wires the UNO Q perception service and the VENTUNO Q governance service to Sentry for exception tracking, but only if `SENTRY_DSN` is set in the environment. Unset, `init_sentry()` is a no-op and neither service makes an outbound call, preserving the "no cloud dependency at runtime" posture above. To opt in:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `SENTRY_DSN` | unset (disabled) | Sentry project DSN. Setting this is what turns reporting on. |
+| `SENTRY_ENVIRONMENT` | `development` | Environment tag on reported events. |
+| `SENTRY_RELEASE` | unset | Release tag on reported events. |
+| `SENTRY_TRACES_SAMPLE_RATE` | `0.0` | Performance trace sampling; 0 means errors only. |
+
+`send_default_pii` is always forced off: this stack sits on the governance/actuation path, and nothing about detections, commands or audit rows should leave the LAN as a side effect of error reporting.
+
 ## Structure
 
 ```
@@ -32,7 +45,8 @@ linux-stack/
   ipc/              Binary IPC codec and MockSTM32H5
   governance/       GovernanceFilter and the VENTUNO Q service entry point
   oversight/        Attestation chain, SupervisorLink, MockR4Supervisor
-  tests/            638 tests, 100% line coverage, hardware-free
+  observability.py  Optional, opt-in Sentry error reporting
+  tests/            646 tests, 100% line coverage, hardware-free
   requirements.txt
 ```
 

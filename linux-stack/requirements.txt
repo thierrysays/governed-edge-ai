@@ -5,3 +5,4 @@ bandit>=1.7
 pip-audit>=2.7
 mypy>=1.10
 numpy>=1.26
+sentry-sdk>=2.0

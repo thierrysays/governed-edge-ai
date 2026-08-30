@@ -152,28 +152,30 @@ governed-edge-ai/
 │   └── README.md
 ├── audit-service/
 │   ├── logger.py                  # AuditLogger, AuditEvent, session management
+│   ├── observability.py           # Optional, opt-in Sentry error reporting
 │   ├── dashboard/                 # FastAPI read-only audit dashboard
 │   ├── requirements.txt
 │   ├── pyproject.toml
-│   └── tests/                     # 99 tests
+│   └── tests/                     # 105 tests
 └── linux-stack/
     ├── ipc/                       # Binary IPC codec + MockSTM32H5
     ├── perception/                # DetectionResult, backends, capture, TCP transport, UNO Q service
     ├── governance/                # GovernanceFilter, VENTUNO Q service
     ├── oversight/                 # Attestation chain, SupervisorLink, latch relay, MockR4Supervisor
+    ├── observability.py           # Optional, opt-in Sentry error reporting
     ├── requirements.txt
     ├── pyproject.toml
-    └── tests/                     # 638 tests
+    └── tests/                     # 646 tests
 ```
 
 ## QA baseline
 
-737 tests across two modules · 100% line coverage on both · ruff clean · mypy strict clean · bandit clean · pip-audit clean
+751 tests across two modules · 100% line coverage on both · ruff clean · mypy strict clean · bandit clean · pip-audit clean
 
 | Module | Tests | Coverage |
 |---|---|---|
-| linux-stack | 638 | 100% |
-| audit-service | 99 | 100% |
+| linux-stack | 646 | 100% |
+| audit-service | 105 | 100% |
 
 `.github/workflows/qa.yml` runs `make qa` on every pull request and on every push to `main`. It is the same gate a contributor runs locally, on a runner with no hardware attached.
 

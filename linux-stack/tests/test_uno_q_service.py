@@ -142,3 +142,14 @@ class TestPerceptionService:
             instance.run = MagicMock()
             result = main(["--source", "synthetic", "--host", "127.0.0.1"])
         assert result == 0
+
+    def test_main_logs_when_sentry_enabled(self):
+        from perception.uno_q_service import main
+        with (
+            patch("perception.uno_q_service.init_sentry", return_value=True),
+            patch("perception.uno_q_service.PerceptionService") as MockService,
+        ):
+            instance = MockService.return_value
+            instance.run = MagicMock()
+            result = main(["--source", "synthetic", "--host", "127.0.0.1"])
+        assert result == 0

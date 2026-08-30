@@ -43,6 +43,7 @@ from logger import AuditLogger  # noqa: E402
 
 from governance.filter import DEFAULT_COMMAND_MAP, GovernanceFilter  # noqa: E402
 from ipc.mock_peer import MockSTM32H5  # noqa: E402
+from observability import init_sentry  # noqa: E402
 from oversight.mock_supervisor import MockR4Supervisor  # noqa: E402
 from oversight.supervisor_link import SupervisorLink  # noqa: E402
 from perception.network import DetectionResultServer  # noqa: E402
@@ -132,6 +133,8 @@ def _open_supervisor(
 
 def main(argv: Sequence[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    if init_sentry("ventuno-q-governance"):
+        log.info("Sentry error reporting enabled (SENTRY_DSN set).")
 
     parser = argparse.ArgumentParser(description="VENTUNO Q governance service")
     parser.add_argument(
