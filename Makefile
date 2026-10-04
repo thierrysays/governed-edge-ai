@@ -1,4 +1,4 @@
-# Governed Edge AI — project-wide QA targets
+# Governed Edge AI, project-wide QA targets
 #
 # Canonical rule: every module under this repo must have a tests/ directory
 # and must pass `make qa` before code is committed.
@@ -23,7 +23,7 @@ PYTHON      := python3
 AUDIT       := audit-service
 LINUX       := linux-stack
 
-.PHONY: smoke test lint typecheck security qa \
+.PHONY: smoke test lint typecheck security register qa \
         audit-test audit-smoke audit-lint audit-typecheck audit-security \
         linux-test linux-smoke linux-lint linux-typecheck linux-security \
         _check-audit-deps _check-linux-deps _check-sec-deps
@@ -42,7 +42,13 @@ typecheck: audit-typecheck linux-typecheck
 
 security: audit-security linux-security
 
-qa: lint typecheck security test
+# The house register bans the em dash outright. A convention nothing reads is a
+# convention that decays, so this reads it. Quoted material opts out in place,
+# visibly, with a marker a reviewer can disagree with.
+register:
+	$(PYTHON) scripts/check_prose_register.py
+
+qa: lint typecheck security register test
 
 # ---------------------------------------------------------------------------
 # audit-service

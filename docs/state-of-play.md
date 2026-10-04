@@ -164,8 +164,8 @@ licence, a regulatory frame and, in one case, the same five boards. They share
 no code and no history with this repository, and no source path collides with
 one here.
 
-**[`edge-ai-refusal-runtime`](https://github.com/thierrysays/edge-ai-refusal-runtime)**
-— the software runtime for the argument this rig makes in hardware. A pip-installable Python package with five controls in a
+**[`edge-ai-refusal-runtime`](https://github.com/thierrysays/edge-ai-refusal-runtime)**:
+the software runtime for the argument this rig makes in hardware. A pip-installable Python package with five controls in a
 fixed order: admission gate, inference journal, default-deny policy, stop
 channel, budgets. Simulation-first: the controls were written, tested and
 deliberately broken before any board was on a bench. `v0.1.0`, 113 tests, and
@@ -177,7 +177,7 @@ project yielded. Its schema identifiers still read `governed-edge-ai/...`
 because they are inside hashed records and signed payloads and cannot move
 without invalidating them; its ADR 0010 explains that at length.
 
-**[`cra-in-a-box`](https://github.com/thierrysays/cra-in-a-box)** — the Cyber
+**[`cra-in-a-box`](https://github.com/thierrysays/cra-in-a-box)**: the Cyber
 Resilience Act chain end to end and offline:
 SBOM, VEX, scan, Article 14 reporting, signed update, Annex VII pack. `v0.1.0`,
 110 tests. Nothing to do with this rig beyond the author.
@@ -189,15 +189,15 @@ the overlap is worth naming precisely because it is small.
 
 | | this repository | `edge-ai-refusal-runtime` |
 |---|---|---|
-| Journal | SQLite + SHA-256 chain, witnessed off-host, **unkeyed** — signing is build step 14 | JSONL chain, Merkle checkpoints, Ed25519, independent verifier that shares no state with the writer |
+| Journal | SQLite + SHA-256 chain, witnessed off-host, **unkeyed**, signing is build step 14 | JSONL chain, Merkle checkpoints, Ed25519, independent verifier that shares no state with the writer |
 | Stop | bistable relay contact, physical, survives its own board's death | a simulated relay that starts engaged |
 | Policy | a confidence threshold at 0.70, in code | default-deny rule engine, rules as JSON data |
 | Admission gate, budgets, Article 50 marking | none | all three |
 | Hardware | five boards, none powered on | none, and it says so |
 
-Each has something the other has designed and not built. Build step 14 here —
-signing the audit chain — is implemented there. Its first milestone there —
-porting a stop channel to a Modulino Latch Relay — is designed here in detail,
+Each has something the other has designed and not built. Build step 14 here
+(signing the audit chain) is implemented there. Its first milestone there
+(porting a stop channel to a Modulino Latch Relay) is designed here in detail,
 including the power-loss fault and the cut-harness fault that this project found
 by reasoning rather than by testing.
 

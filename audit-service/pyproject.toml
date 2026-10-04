@@ -54,4 +54,4 @@ ignore_missing_imports = true
 warn_return_any = false  # SQLite row_factory returns Any by design
 
 [tool.bandit]
-skips = ["B101"]  # assert used — legitimate in pytest test files
+skips = ["B101"]  # assert used, legitimate in pytest test files

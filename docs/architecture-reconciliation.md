@@ -10,6 +10,7 @@ Version 1.2, 2026-08-19 · Status: **design only, nothing implemented**. All ope
 
 Two architectures describe this project and they are not the same one.
 
+<!-- register: quoted -->
 **The diagram**, *governed-edge-ai — Chaîne de contrôle de gouvernance* (Scénario C + Lot E, v1, 19 August 2026), organises the system into four paths: decision (software, revocable), safety (physical, non-bypassable), independent evidence, and human supervision. Physical enforcement is a bistable latch relay in the motor power line. Evidence and human supervision hang off a Modulino Hub on the VENTUNO Q Qwiic bus, with an Arduino Nesso N1 out of band.
 
 **The codebase** at `v2.0.0` implements an Arduino UNO R4 WiFi as an oversight node holding a live GPIO line into the Alvik's kill-switch pin, with perception on the UNO Q and governance on the VENTUNO Q.
@@ -43,6 +44,7 @@ Two findings from the current code feed directly into the rationale and are wort
 
 ### The two rules it states
 
+<!-- register: quoted -->
 > **Règle de conception :** tous les modules de gouvernance se branchent sur le VENTUNO Q, jamais sur l'Alvik — le composant gouverné ne produit pas sa propre preuve.
 
 > **Pourquoi c'est un contrôle et non une assertion :** le relais est bistable, son état survit à la coupure d'alimentation ET au reboot côté Linux.
